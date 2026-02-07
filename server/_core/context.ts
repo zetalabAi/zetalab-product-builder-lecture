@@ -1,6 +1,8 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
-import type { User } from "../../drizzle/schema";
-import { sdk } from "./sdk";
+import type { User } from "../db-firestore";
+import { verifyFirebaseSession } from "./firebase-auth";
+import { getUserByUid } from "../db-firestore";
+import { COOKIE_NAME } from "@shared/const";
 import crypto from "crypto";
 
 // AuthTrace 진단 로깅 (환경 변수로 제어)
@@ -24,17 +26,24 @@ export async function createContext(
   let user: User | null = null;
 
   try {
-    user = await sdk.authenticateRequest(opts.req);
+    // Verify Firebase session cookie
+    const decodedClaims = await verifyFirebaseSession(opts.req);
+
+    if (decodedClaims) {
+      // Get user from Firestore
+      user = await getUserByUid(decodedClaims.uid);
+    }
   } catch (error) {
     // Authentication is optional for public procedures.
+    authTrace("auth error", { error: error instanceof Error ? error.message : String(error) });
     user = null;
   }
 
   // AuthTrace: 세션 체크 (경로가 /api/trpc/auth.me일 때만)
   if (opts.req.path?.includes("auth.me")) {
     const cookieNames = Object.keys(opts.req.cookies || {});
-    const sessionCookie = opts.req.cookies?.["manus-session"];
-    const sessionIdHash = sessionCookie 
+    const sessionCookie = opts.req.cookies?.[COOKIE_NAME];
+    const sessionIdHash = sessionCookie
       ? crypto.createHash("sha256").update(sessionCookie).digest("hex").substring(0, 8)
       : null;
 
@@ -43,7 +52,7 @@ export async function createContext(
       userAgent: opts.req.headers["user-agent"],
       cookieNames,
       sessionIdHash,
-      userIdOrNull: user ? user.id : null
+      userIdOrNull: user ? user.uid : null
     });
   }
 
