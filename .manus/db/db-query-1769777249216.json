@@ -1,0 +1,31 @@
+{
+  "query": "SELECT COUNT(*) as total_users FROM users;\nSELECT COUNT(*) as total_prompts FROM promptHistory;\nSELECT COUNT(*) as total_projects FROM projects;\nSELECT COUNT(*) as total_templates FROM promptTemplates;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway03.us-east-1.prod.aws.tidbcloud.com --port 4000 --user YSiLW1jPtSH3C2A.root --database bM4Xtkk2BjtYbDPv7LPRge --execute SELECT COUNT(*) as total_users FROM users;\nSELECT COUNT(*) as total_prompts FROM promptHistory;\nSELECT COUNT(*) as total_projects FROM projects;\nSELECT COUNT(*) as total_templates FROM promptTemplates;",
+  "rows": [
+    {
+      "total_users": "5"
+    },
+    {
+      "total_users": "total_prompts"
+    },
+    {
+      "total_users": "5"
+    },
+    {
+      "total_users": "total_projects"
+    },
+    {
+      "total_users": "0"
+    },
+    {
+      "total_users": "total_templates"
+    },
+    {
+      "total_users": "5"
+    }
+  ],
+  "messages": [],
+  "stdout": "total_users\n5\ntotal_prompts\n5\ntotal_projects\n0\ntotal_templates\n5\n",
+  "stderr": "",
+  "execution_time_ms": 2707
+}

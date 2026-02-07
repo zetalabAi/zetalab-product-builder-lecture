@@ -1,0 +1,237 @@
+@import "tailwindcss";
+
+/* Font optimization */
+@font-face {
+  font-family: 'Pretendard Variable';
+  font-display: swap;
+}
+
+@theme {
+  /* ChatGPT 스타일 라이트 모드 컬러 시스템 */
+  --color-background: oklch(0.99 0 0);
+  --color-foreground: oklch(0.15 0 0);
+  
+  --color-card: oklch(1 0 0);
+  --color-card-foreground: oklch(0.15 0 0);
+  
+  --color-popover: oklch(1 0 0);
+  --color-popover-foreground: oklch(0.15 0 0);
+  
+  --color-primary: oklch(0.15 0 0);
+  --color-primary-foreground: oklch(0.99 0 0);
+  
+  --color-secondary: oklch(0.96 0 0);
+  --color-secondary-foreground: oklch(0.15 0 0);
+  
+  --color-muted: oklch(0.96 0 0);
+  --color-muted-foreground: oklch(0.45 0 0);
+  
+  --color-accent: oklch(0.96 0 0);
+  --color-accent-foreground: oklch(0.15 0 0);
+  
+  --color-destructive: oklch(0.58 0.22 25);
+  --color-destructive-foreground: oklch(0.99 0 0);
+  
+  --color-border: oklch(0.92 0 0);
+  --color-input: oklch(0.92 0 0);
+  --color-ring: oklch(0.15 0 0);
+  
+  --color-sidebar: oklch(0.99 0 0);
+  --color-sidebar-border: oklch(0.92 0 0);
+  
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  
+  /* 키보드 높이 CSS 변수 초기화 */
+  :root {
+    --keyboard-height: 0px;
+  }
+  
+  body {
+    font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  /* ChatGPT 스타일 컨테이너 */
+  .chat-container {
+    max-width: 48rem;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  
+  /* ChatGPT 스타일 입력창 */
+  .chat-input-wrapper {
+    position: relative;
+    border-radius: 1.5rem;
+    border-width: 1px;
+    border-color: var(--color-border);
+    background-color: var(--color-card);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05);
+    transition: all 0.2s;
+  }
+  
+  .chat-input-wrapper:focus-within {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+  }
+  
+  /* ChatGPT 스타일 버튼 */
+  .chat-button {
+    border-radius: 0.5rem;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+  
+  .chat-button:hover {
+    background-color: var(--color-secondary);
+  }
+  
+  /* 메시지 카드 */
+  .message-card {
+    border-radius: 1rem;
+    border-width: 1px;
+    border-color: var(--color-border);
+    background-color: var(--color-card);
+    padding: 1.5rem;
+    transition: all 0.2s;
+  }
+  
+  .message-card:hover {
+    border-color: var(--color-muted-foreground);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+  
+  /* Feature 카드 */
+  .feature-card {
+    border-radius: 1rem;
+    border-width: 1px;
+    border-color: var(--color-border);
+    background-color: var(--color-card);
+    padding: 1.5rem;
+    transition: all 0.3s;
+    cursor: pointer;
+  }
+  
+  .feature-card:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+  }
+  
+  /* 스크롤바 스타일 */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: var(--color-muted);
+    border-radius: 3px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-muted-foreground);
+  }
+
+  /* 모바일 터치 최적화 */
+  .touch-manipulation {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 모바일 키보드 대응 - 모든 페이지에 자동 적용 */
+  @media (max-width: 768px) {
+    /* 키보드 올라올 때 하단 여백 자동 조정 */
+    body {
+      padding-bottom: var(--keyboard-height);
+      transition: padding-bottom 0.3s ease;
+    }
+  }
+
+  /* 모바일 입력창 최적화 */
+  @media (max-width: 768px) {
+    .chat-input-wrapper {
+      border-radius: 1.25rem;
+    }
+    
+    .feature-card {
+      padding: 1rem;
+      min-height: 44px;
+    }
+
+    /* 모바일 성능 최적화 - 애니메이션 간소화 */
+    * {
+      animation-duration: 100ms !important;
+      transition-duration: 100ms !important;
+    }
+
+    /* 모바일에서 불필요한 효과 제거 */
+    .hover\:scale-105:hover {
+      transform: none;
+    }
+
+    /* 모바일 스크롤바 숨김 (기능은 유지) */
+    * {
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none; /* IE/Edge */
+    }
+
+    *::-webkit-scrollbar {
+      display: none; /* Chrome, Safari, Opera */
+    }
+  }
+}
+
+/* 다크 모드 */
+.dark {
+  --color-background: oklch(0.15 0 0);
+  --color-foreground: oklch(0.95 0 0);
+  
+  --color-card: oklch(0.18 0 0);
+  --color-card-foreground: oklch(0.95 0 0);
+  
+  --color-popover: oklch(0.18 0 0);
+  --color-popover-foreground: oklch(0.95 0 0);
+  
+  --color-primary: oklch(0.95 0 0);
+  --color-primary-foreground: oklch(0.15 0 0);
+  
+  --color-secondary: oklch(0.22 0 0);
+  --color-secondary-foreground: oklch(0.95 0 0);
+  
+  --color-muted: oklch(0.22 0 0);
+  --color-muted-foreground: oklch(0.65 0 0);
+  
+  --color-accent: oklch(0.22 0 0);
+  --color-accent-foreground: oklch(0.95 0 0);
+  
+  --color-border: oklch(0.25 0 0);
+  --color-input: oklch(0.25 0 0);
+  --color-ring: oklch(0.75 0 0);
+  
+  --color-sidebar: oklch(0.15 0 0);
+  --color-sidebar-border: oklch(0.25 0 0);
+}
+
+.dark .chat-input-wrapper:focus-within {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+.dark .message-card:hover,
+.dark .feature-card:hover {
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.08);
+}

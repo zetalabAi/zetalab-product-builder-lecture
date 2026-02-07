@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1769506217408,
+      "tag": "0000_ambitious_ironclad",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1769506347766,
+      "tag": "0001_nappy_stephen_strange",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1769508752468,
+      "tag": "0002_past_patch",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1769658812064,
+      "tag": "0003_clean_union_jack",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1769773093927,
+      "tag": "0004_reflective_santa_claus",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1769870052444,
+      "tag": "0005_faulty_greymalkin",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1770352456432,
+      "tag": "0006_striped_shinobi_shaw",
+      "breakpoints": true
+    }
+  ]
+}

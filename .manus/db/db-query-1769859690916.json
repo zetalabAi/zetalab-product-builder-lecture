@@ -1,0 +1,46 @@
+{
+  "query": "SELECT id, originalQuestion, createdAt, userId FROM promptHistory ORDER BY createdAt DESC LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway03.us-east-1.prod.aws.tidbcloud.com --port 4000 --user YSiLW1jPtSH3C2A.root --database bM4Xtkk2BjtYbDPv7LPRge --execute SELECT id, originalQuestion, createdAt, userId FROM promptHistory ORDER BY createdAt DESC LIMIT 10;",
+  "rows": [
+    {
+      "id": "300001",
+      "originalQuestion": "배추김치 맛잇게 담그는법",
+      "createdAt": "2026-01-31 09:14:03",
+      "userId": "1"
+    },
+    {
+      "id": "270001",
+      "originalQuestion": "2026년 트랜드에 대해 블로그 글을 써줘",
+      "createdAt": "2026-01-30 06:32:57",
+      "userId": "960001"
+    },
+    {
+      "id": "210001",
+      "originalQuestion": "pdf 이력서 내용으로 포트폴리오렌딩페이지를 만들어줘.",
+      "createdAt": "2026-01-29 12:52:28",
+      "userId": "720001"
+    },
+    {
+      "id": "3",
+      "originalQuestion": "수정 테스트",
+      "createdAt": "2026-01-27 09:39:48",
+      "userId": "1"
+    },
+    {
+      "id": "2",
+      "originalQuestion": "간단한 질문",
+      "createdAt": "2026-01-27 09:39:38",
+      "userId": "1"
+    },
+    {
+      "id": "1",
+      "originalQuestion": "테스트 질문입니다",
+      "createdAt": "2026-01-27 09:39:28",
+      "userId": "1"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\toriginalQuestion\tcreatedAt\tuserId\n300001\t배추김치 맛잇게 담그는법\t2026-01-31 09:14:03\t1\n270001\t2026년 트랜드에 대해 블로그 글을 써줘\t2026-01-30 06:32:57\t960001\n210001\tpdf 이력서 내용으로 포트폴리오렌딩페이지를 만들어줘.\t2026-01-29 12:52:28\t720001\n3\t수정 테스트\t2026-01-27 09:39:48\t1\n2\t간단한 질문\t2026-01-27 09:39:38\t1\n1\t테스트 질문입니다\t2026-01-27 09:39:28\t1\n",
+  "stderr": "",
+  "execution_time_ms": 1507
+}

@@ -1,0 +1,1 @@
+ALTER TABLE `promptHistory` ADD `isPinned` int DEFAULT 0 NOT NULL;
