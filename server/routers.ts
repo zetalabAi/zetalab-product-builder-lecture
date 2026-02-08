@@ -43,31 +43,49 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const { nanoid } = await import('nanoid');
         const sessionId = nanoid();
-        
-        // Analyze question and find matching template
-        const templates = await getAllIntentTemplates();
-        let selectedTemplate = templates.find(t => {
-          const keywords = JSON.parse(t.keywords || '[]');
-          return keywords.some((keyword: string) => 
-            input.question.toLowerCase().includes(keyword.toLowerCase())
-          );
-        });
-        
-        // Fallback to general template if no match
-        if (!selectedTemplate) {
-          selectedTemplate = templates.find(t => t.category === '일반 질문');
+
+        // 하드코딩된 기본 질문 세트 (데이터베이스 없어도 작동)
+        const defaultQuestions = [
+          "구체적으로 무엇을 만들고 싶으신가요?",
+          "이 작업물은 어디에 사용할 예정인가요?",
+          "누구를 위한 작업인가요?",
+          "꼭 지켜야 할 조건이나 피해야 할 것이 있나요?",
+          "최종 결과물은 어떤 모습이면 좋을까요?"
+        ];
+
+        // Try to get templates from database
+        try {
+          const templates = await getAllIntentTemplates();
+          let selectedTemplate = templates.find(t => {
+            const keywords = JSON.parse(t.keywords || '[]');
+            return keywords.some((keyword: string) =>
+              input.question.toLowerCase().includes(keyword.toLowerCase())
+            );
+          });
+
+          // Fallback to general template if no match
+          if (!selectedTemplate) {
+            selectedTemplate = templates.find(t => t.category === '일반 질문');
+          }
+
+          if (selectedTemplate) {
+            const questions = JSON.parse(selectedTemplate.questions);
+            return {
+              sessionId,
+              category: selectedTemplate.category,
+              questions: questions.slice(0, 5),
+              canSkip: true
+            };
+          }
+        } catch (error) {
+          console.log('[zetaAI.init] Database template fetch failed, using default questions');
         }
-        
-        if (!selectedTemplate) {
-          throw new Error('No intent template found');
-        }
-        
-        const questions = JSON.parse(selectedTemplate.questions);
-        
+
+        // Fallback: 하드코딩된 기본 질문 사용
         return {
           sessionId,
-          category: selectedTemplate.category,
-          questions: questions.slice(0, 5), // Max 5 questions
+          category: '일반',
+          questions: defaultQuestions,
           canSkip: true
         };
       }),
@@ -119,19 +137,16 @@ export const appRouter = router({
         ];
         
         // Save to database
-        const result = await createPromptHistory({
-          userId: ctx.user.id,
+        const promptId = await createPromptHistory({
+          userId: ctx.user.uid,
           sessionId: input.sessionId,
           originalQuestion: input.originalQuestion,
-          intentAnswers: JSON.stringify(input.answers),
+          intentAnswers: input.answers,
           generatedPrompt,
-          usedLLM: 'gpt-4',
-          suggestedServices: JSON.stringify(suggestedServices)
+          usedLLM: 'gemini-2.5-flash-lite',
+          suggestedServices: suggestedServices
         });
-        
-        // Get the inserted ID
-        const promptId = Number(result[0]?.insertId || 0);
-        
+
         return {
           promptId,
           originalQuestion: input.originalQuestion,
@@ -143,14 +158,14 @@ export const appRouter = router({
     // Update edited prompt
     updatePrompt: protectedProcedure
       .input(z.object({
-        promptId: z.number(),
+        promptId: z.string(),
         editedPrompt: z.string()
       }))
       .mutation(async ({ input, ctx }) => {
         await updatePromptHistory(input.promptId, {
           editedPrompt: input.editedPrompt
         });
-        
+
         return {
           success: true,
           promptId: input.promptId
@@ -160,8 +175,8 @@ export const appRouter = router({
     // Get prompt history
     getHistory: protectedProcedure
       .query(async ({ ctx }) => {
-        const history = await getPromptHistoryByUserId(ctx.user.id, 20);
-        
+        const history = await getPromptHistoryByUserId(ctx.user.uid, 20);
+
         return history.map(h => ({
           id: h.id,
           originalQuestion: h.originalQuestion,
@@ -173,21 +188,21 @@ export const appRouter = router({
     
     // Get single prompt by ID
     getPromptById: protectedProcedure
-      .input(z.object({ promptId: z.number() }))
+      .input(z.object({ promptId: z.string() }))
       .query(async ({ input, ctx }) => {
         const prompt = await getPromptHistoryById(input.promptId);
-        
-        if (!prompt || prompt.userId !== ctx.user.id) {
+
+        if (!prompt || prompt.userId !== ctx.user.uid) {
           throw new Error('Prompt not found');
         }
-        
+
         return {
           id: prompt.id,
           originalQuestion: prompt.originalQuestion,
-          intentAnswers: prompt.intentAnswers ? JSON.parse(prompt.intentAnswers) : {},
+          intentAnswers: prompt.intentAnswers || {},
           generatedPrompt: prompt.generatedPrompt,
           editedPrompt: prompt.editedPrompt,
-          suggestedServices: prompt.suggestedServices ? JSON.parse(prompt.suggestedServices) : [],
+          suggestedServices: prompt.suggestedServices || [],
           createdAt: prompt.createdAt
         };
       }),
@@ -196,8 +211,8 @@ export const appRouter = router({
     searchHistory: protectedProcedure
       .input(z.object({ query: z.string() }))
       .query(async ({ input, ctx }) => {
-        const history = await getPromptHistoryByUserId(ctx.user.id, 100);
-        
+        const history = await getPromptHistoryByUserId(ctx.user.uid, 100);
+
         if (!input.query.trim()) {
           return history.slice(0, 20).map(h => ({
             id: h.id,
@@ -207,14 +222,14 @@ export const appRouter = router({
             createdAt: h.createdAt
           }));
         }
-        
+
         const searchQuery = input.query.toLowerCase();
-        const filtered = history.filter(h => 
+        const filtered = history.filter(h =>
           h.originalQuestion.toLowerCase().includes(searchQuery) ||
           h.generatedPrompt.toLowerCase().includes(searchQuery) ||
           (h.editedPrompt && h.editedPrompt.toLowerCase().includes(searchQuery))
         );
-        
+
         return filtered.slice(0, 20).map(h => ({
           id: h.id,
           originalQuestion: h.originalQuestion,
@@ -226,15 +241,15 @@ export const appRouter = router({
     
     // Delete conversation
     deleteHistory: protectedProcedure
-      .input(z.object({ promptId: z.number() }))
+      .input(z.object({ promptId: z.string() }))
       .mutation(async ({ input, ctx }) => {
         const { deletePromptHistory } = await import('./db');
         const prompt = await getPromptHistoryById(input.promptId);
-        
-        if (!prompt || prompt.userId !== ctx.user.id) {
+
+        if (!prompt || prompt.userId !== ctx.user.uid) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'Cannot delete this conversation' });
         }
-        
+
         await deletePromptHistory(input.promptId);
         
         return {

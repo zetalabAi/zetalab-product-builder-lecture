@@ -15,7 +15,7 @@ export default function PromptResult() {
   const { isAuthenticated, loading } = useAuth();
   const [, navigate] = useLocation();
   const [, params] = useRoute("/result/:promptId");
-  const promptId = params?.promptId ? parseInt(params.promptId) : 0;
+  const promptId = params?.promptId || "";
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState("");
@@ -27,7 +27,7 @@ export default function PromptResult() {
 
   const { data: prompt, isLoading } = trpc.zetaAI.getPromptById.useQuery(
     { promptId },
-    { enabled: isAuthenticated && promptId > 0 }
+    { enabled: isAuthenticated && !!promptId }
   );
 
   const updateMutation = trpc.zetaAI.updatePrompt.useMutation({

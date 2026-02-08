@@ -6,6 +6,9 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { MainLayout } from "./components/MainLayout";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { lazy, Suspense, useEffect } from "react";
+import { handleRedirectResult } from "@/lib/firebase";
+import { toast } from "sonner";
+import { trpc } from "@/lib/trpc";
 
 // Lazy load 페이지 컴포넌트 - 모바일 성능 최적화
 const Home = lazy(() => import("./pages/Home"));
@@ -133,6 +136,27 @@ function Router() {
 }
 
 function App() {
+  const utils = trpc.useUtils();
+
+  // Handle Firebase redirect result on app load
+  useEffect(() => {
+    const handleAuth = async () => {
+      try {
+        const result = await handleRedirectResult();
+        if (result) {
+          toast.success("로그인 성공!");
+          // Refresh user data
+          await utils.auth.me.invalidate();
+        }
+      } catch (error: any) {
+        console.error("Redirect auth failed:", error);
+        toast.error(error.message || "로그인에 실패했습니다.");
+      }
+    };
+
+    handleAuth();
+  }, [utils]);
+
   return (
     <ErrorBoundary>
       <ThemeProvider

@@ -1,14 +1,374 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="ko">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hello World</title>
-  <link href='/style.css' rel='stylesheet'>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZetaLab - AI 프롬프트 생성 플랫폼</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+            background: #fafafa;
+            color: #1a1a1a;
+            line-height: 1.5;
+        }
+
+        /* Top Navigation */
+        .nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: white;
+            border-bottom: 1px solid #e5e5e5;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            z-index: 100;
+        }
+
+        .nav-logo {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a1a;
+            text-decoration: none;
+        }
+
+        .nav-login {
+            padding: 8px 20px;
+            background: white;
+            border: 1px solid #d4d4d4;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #1a1a1a;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+
+        .nav-login:hover {
+            border-color: #a3a3a3;
+        }
+
+        /* Main Container */
+        .main {
+            margin-top: 60px;
+            min-height: calc(100vh - 60px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+
+        /* Central Input Area */
+        .input-container {
+            width: 100%;
+            max-width: 720px;
+            margin: 0 auto;
+        }
+
+        .input-label {
+            font-size: 13px;
+            color: #737373;
+            margin-bottom: 12px;
+            font-weight: 400;
+        }
+
+        .input-wrapper {
+            position: relative;
+            background: white;
+            border: 1.5px solid #e5e5e5;
+            border-radius: 12px;
+            padding: 18px 20px;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+
+        .input-wrapper:focus-within {
+            border-color: #525252;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .main-input {
+            width: 100%;
+            border: none;
+            outline: none;
+            font-size: 16px;
+            color: #1a1a1a;
+            background: transparent;
+            min-height: 60px;
+            resize: none;
+            font-family: inherit;
+        }
+
+        .main-input::placeholder {
+            color: #a3a3a3;
+        }
+
+        .input-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 12px;
+        }
+
+        .submit-button {
+            padding: 10px 24px;
+            background: #1a1a1a;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .submit-button:hover {
+            background: #404040;
+        }
+
+        .submit-button:disabled {
+            background: #e5e5e5;
+            color: #a3a3a3;
+            cursor: not-allowed;
+        }
+
+        /* Example Prompts */
+        .examples {
+            margin-top: 40px;
+            width: 100%;
+            max-width: 720px;
+        }
+
+        .examples-title {
+            font-size: 13px;
+            color: #737373;
+            margin-bottom: 16px;
+            font-weight: 400;
+        }
+
+        .example-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .example-item {
+            padding: 14px 16px;
+            background: white;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #525252;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .example-item:hover {
+            border-color: #a3a3a3;
+            background: #fafafa;
+        }
+
+        /* Response Area (initially hidden) */
+        .response-area {
+            margin-top: 32px;
+            width: 100%;
+            max-width: 720px;
+            background: white;
+            border: 1px solid #e5e5e5;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            display: none;
+        }
+
+        .response-area.active {
+            display: block;
+        }
+
+        .response-text {
+            font-size: 15px;
+            color: #1a1a1a;
+            line-height: 1.6;
+        }
+
+        /* Loading State */
+        .loading {
+            display: inline-block;
+            width: 4px;
+            height: 4px;
+            background: #525252;
+            border-radius: 50%;
+            animation: pulse 1.2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        /* Mobile Adjustments */
+        @media (max-width: 768px) {
+            .nav {
+                padding: 0 16px;
+            }
+
+            .nav-logo {
+                font-size: 16px;
+            }
+
+            .main {
+                padding: 24px 16px;
+            }
+
+            .input-wrapper {
+                padding: 16px;
+            }
+
+            .main-input {
+                font-size: 15px;
+                min-height: 80px;
+            }
+
+            .examples {
+                margin-top: 32px;
+            }
+
+            .example-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .examples-title {
+                display: none;
+            }
+        }
+
+        /* Subtle fade-in on load */
+        .fade-in {
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    </style>
 </head>
 <body>
-  <h1>Hello, world!</h1>
-  <button onclick="console.log('hello');">Press me</button>
-  <script defer type="text/javascript" src="/main.js"></script>
+    <!-- Top Navigation -->
+    <nav class="nav">
+        <a href="/" class="nav-logo">ZetaLab</a>
+        <button class="nav-login" onclick="alert('Firebase 인증 설정 필요')">로그인</button>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main fade-in">
+        <!-- Central Input Area -->
+        <div class="input-container">
+            <div class="input-label">무엇을 만들고 싶으신가요?</div>
+            <div class="input-wrapper">
+                <textarea
+                    class="main-input"
+                    placeholder="블로그 글, 유튜브 쇼츠, PPT, UI/UX 디자인을 위한 프롬프트를 생성합니다"
+                    rows="1"
+                    oninput="autoResize(this)"
+                ></textarea>
+            </div>
+            <div class="input-actions">
+                <button class="submit-button" disabled onclick="handleSubmit()">생성하기</button>
+            </div>
+        </div>
+
+        <!-- Example Prompts -->
+        <div class="examples">
+            <div class="examples-title">예시 프롬프트</div>
+            <div class="example-grid">
+                <div class="example-item" onclick="fillExample(this)">
+                    블로그 글 작성을 위한 구조화된 프롬프트
+                </div>
+                <div class="example-item" onclick="fillExample(this)">
+                    유튜브 쇼츠 스크립트 생성
+                </div>
+                <div class="example-item" onclick="fillExample(this)">
+                    PPT 슬라이드 구성안 만들기
+                </div>
+                <div class="example-item" onclick="fillExample(this)">
+                    UI/UX 디자인 개선 제안
+                </div>
+            </div>
+        </div>
+
+        <!-- Response Area (initially hidden) -->
+        <div class="response-area" id="responseArea">
+            <div class="response-text" id="responseText"></div>
+        </div>
+    </main>
+
+    <script>
+        const input = document.querySelector('.main-input');
+        const submitBtn = document.querySelector('.submit-button');
+        const responseArea = document.getElementById('responseArea');
+        const responseText = document.getElementById('responseText');
+
+        // Auto-resize textarea
+        function autoResize(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
+
+            // Enable/disable submit button
+            submitBtn.disabled = textarea.value.trim().length === 0;
+        }
+
+        // Fill example text
+        function fillExample(element) {
+            input.value = element.textContent.trim();
+            autoResize(input);
+            input.focus();
+        }
+
+        // Handle submit
+        function handleSubmit() {
+            const userInput = input.value.trim();
+            if (!userInput) return;
+
+            // Show loading state
+            responseArea.classList.add('active');
+            responseText.innerHTML = '<span class="loading"></span><span class="loading" style="margin-left: 8px;"></span><span class="loading" style="margin-left: 8px;"></span>';
+
+            // Simulate API call
+            setTimeout(() => {
+                responseText.innerHTML = `
+                    <p><strong>생성된 프롬프트:</strong></p>
+                    <p style="margin-top: 12px; color: #525252;">
+                        "${userInput}"에 대한 프롬프트가 생성되었습니다.
+                        <br><br>
+                        실제 기능을 사용하려면 Firebase 프로젝트를 설정하고 Gemini API를 연동해주세요.
+                    </p>
+                `;
+            }, 1000);
+        }
+
+        // Enable Enter to submit (with Shift+Enter for new line)
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!submitBtn.disabled) {
+                    handleSubmit();
+                }
+            }
+        });
+
+        // Focus input on load
+        window.addEventListener('load', () => {
+            input.focus();
+        });
+    </script>
 </body>
 </html>

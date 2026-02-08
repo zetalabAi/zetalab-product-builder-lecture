@@ -1,436 +1,872 @@
-import { eq, desc, and } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, promptTemplates, InsertPromptTemplate, promptHistory, InsertPromptHistory, intentTemplate, InsertIntentTemplate, projects, InsertProject, projectConversations, InsertProjectConversation, promptAssets, InsertPromptAsset, promptVersions, InsertPromptVersion } from "../drizzle/schema";
-import { ENV } from './_core/env';
+// Firestore database helpers for ZetaLab
+import admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 
-let _db: ReturnType<typeof drizzle> | null = null;
+// Check if we're in dev mode without Firebase credentials
+const isDevModeWithoutFirebase =
+  process.env.NODE_ENV === 'development' &&
+  process.env.DEV_AUTO_LOGIN === 'true' &&
+  !process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
-export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle(process.env.DATABASE_URL);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
-  }
-  return _db;
-}
-
-export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
-
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot upsert user: database not available");
+// Initialize Firebase Admin if not already initialized
+function initializeFirebase() {
+  if (isDevModeWithoutFirebase) {
+    console.log('[Firestore] Dev mode without credentials - Firebase initialization skipped');
     return;
   }
 
-  try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
-    const updateSet: Record<string, unknown> = {};
-
-    const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
-
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-
-    textFields.forEach(assignNullable);
-
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
-    }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    }
-
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
+  if (admin.apps.length === 0) {
+    admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+      projectId: process.env.FIREBASE_PROJECT_ID || 'zetalab-product-builder'
     });
+  }
+}
+
+initializeFirebase();
+
+const db = isDevModeWithoutFirebase ? null : admin.firestore();
+
+// ============================================================================
+// Dev Mode In-Memory Storage
+// ============================================================================
+
+const devMemoryStore: {
+  conversations: Map<string, Conversation>;
+} = {
+  conversations: new Map(),
+};
+
+// ============================================================================
+// Type Definitions (matching Firestore schema)
+// ============================================================================
+
+export interface User {
+  uid: string;
+  openId: string;
+  name: string | null;
+  email: string | null;
+  loginMethod: string | null;
+  role: 'user' | 'admin';
+  manusLinked: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  lastSignedIn: Date;
+}
+
+export interface InsertUser {
+  uid: string;
+  openId: string;
+  name?: string | null;
+  email?: string | null;
+  loginMethod?: string | null;
+  role?: 'user' | 'admin';
+  lastSignedIn?: Date;
+}
+
+export interface PromptTemplate {
+  id: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  templateContent: string;
+  category: string | null;
+  tags: string[];
+  isPublic: boolean;
+  usageCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InsertPromptTemplate {
+  userId: string;
+  title: string;
+  description?: string | null;
+  templateContent: string;
+  category?: string | null;
+  tags?: string[];
+  isPublic?: boolean;
+  usageCount?: number;
+}
+
+export interface PromptAsset {
+  id: string;
+  userId: string;
+  name: string;
+  description: string | null;
+  originalQuestion: string;
+  currentVersionId: string | null;
+  versionCount: number;
+  lastUsedAt: Date | null;
+  lastModifiedAt: Date;
+  successStatus: number;
+  projectId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InsertPromptAsset {
+  userId: string;
+  name: string;
+  description?: string | null;
+  originalQuestion: string;
+  currentVersionId?: string | null;
+  versionCount?: number;
+  projectId?: string | null;
+}
+
+export interface PromptVersion {
+  id: string;
+  userId: string;
+  versionNumber: number;
+  generatedPrompt: string;
+  editedPrompt: string | null;
+  intentAnswers: Record<string, any> | null;
+  usedLLM: string | null;
+  suggestedServices: Record<string, any> | null;
+  notes: string | null;
+  successStatus: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InsertPromptVersion {
+  userId: string;
+  versionNumber: number;
+  generatedPrompt: string;
+  editedPrompt?: string | null;
+  intentAnswers?: Record<string, any> | null;
+  usedLLM?: string | null;
+  suggestedServices?: Record<string, any> | null;
+  notes?: string | null;
+  successStatus?: number;
+}
+
+export interface Conversation {
+  id: string;
+  userId: string;
+  sessionId: string;
+  originalQuestion: string;
+  intentAnswers: Record<string, any> | null;
+  generatedPrompt: string;
+  editedPrompt: string | null;
+  usedLLM: string | null;
+  suggestedServices: Record<string, any> | null;
+  isPinned: boolean;
+  projectId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InsertConversation {
+  userId: string;
+  sessionId: string;
+  originalQuestion: string;
+  intentAnswers?: Record<string, any> | null;
+  generatedPrompt: string;
+  editedPrompt?: string | null;
+  usedLLM?: string | null;
+  suggestedServices?: Record<string, any> | null;
+  isPinned?: boolean;
+  projectId?: string | null;
+}
+
+export interface IntentTemplate {
+  id: string;
+  category: string;
+  keywords: string[];
+  questions: string[];
+  defaultAnswers: Record<string, any> | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InsertIntentTemplate {
+  category: string;
+  keywords: string[];
+  questions: string[];
+  defaultAnswers?: Record<string, any> | null;
+}
+
+export interface Project {
+  id: string;
+  userId: string;
+  name: string;
+  description: string | null;
+  color: string | null;
+  icon: string | null;
+  conversationIds: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InsertProject {
+  userId: string;
+  name: string;
+  description?: string | null;
+  color?: string | null;
+  icon?: string | null;
+}
+
+// ============================================================================
+// User Functions
+// ============================================================================
+
+export async function upsertUser(userData: InsertUser): Promise<void> {
+  try {
+    const userRef = db.collection('users').doc(userData.uid);
+    const userDoc = await userRef.get();
+
+    const now = new Date();
+
+    if (userDoc.exists) {
+      // Update existing user
+      const updateData: Partial<User> = {
+        updatedAt: now,
+        lastSignedIn: userData.lastSignedIn || now,
+      };
+
+      if (userData.name !== undefined) updateData.name = userData.name;
+      if (userData.email !== undefined) updateData.email = userData.email;
+      if (userData.loginMethod !== undefined) updateData.loginMethod = userData.loginMethod;
+      if (userData.role !== undefined) updateData.role = userData.role;
+
+      await userRef.update(updateData);
+    } else {
+      // Create new user
+      const newUser: User = {
+        uid: userData.uid,
+        openId: userData.openId,
+        name: userData.name || null,
+        email: userData.email || null,
+        loginMethod: userData.loginMethod || null,
+        role: userData.role || 'user',
+        manusLinked: false,
+        createdAt: now,
+        updatedAt: now,
+        lastSignedIn: userData.lastSignedIn || now,
+      };
+
+      await userRef.set(newUser);
+    }
   } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
+    console.error('[Firestore] Failed to upsert user:', error);
     throw error;
   }
 }
 
-export async function getUserByOpenId(openId: string) {
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
+export async function getUserByUid(uid: string): Promise<User | null> {
+  try {
+    const userDoc = await db.collection('users').doc(uid).get();
+
+    if (!userDoc.exists) {
+      return null;
+    }
+
+    return { id: userDoc.id, ...userDoc.data() } as User;
+  } catch (error) {
+    console.error('[Firestore] Failed to get user by UID:', error);
+    return null;
   }
-
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
-  return result.length > 0 ? result[0] : undefined;
 }
 
-export async function updateUserManusLinked(openId: string, manusLinked: number) {
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot update user: database not available");
+export async function getUserByOpenId(openId: string): Promise<User | null> {
+  try {
+    const snapshot = await db.collection('users')
+      .where('openId', '==', openId)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return null;
+    }
+
+    const doc = snapshot.docs[0];
+    return { id: doc.id, ...doc.data() } as User;
+  } catch (error) {
+    console.error('[Firestore] Failed to get user by openId:', error);
+    return null;
+  }
+}
+
+export async function updateUserManusLinked(uid: string, manusLinked: boolean): Promise<void> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - skipping updateUserManusLinked');
     return;
   }
 
-  await db.update(users).set({ manusLinked }).where(eq(users.openId, openId));
+  try {
+    await db.collection('users').doc(uid).update({
+      manusLinked,
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to update user manus linked:', error);
+    throw error;
+  }
 }
 
-// Prompt History helpers
-export async function createPromptHistory(data: InsertPromptHistory) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
+// ============================================================================
+// Conversation Functions (formerly promptHistory)
+// ============================================================================
+
+export async function createConversation(data: InsertConversation): Promise<string> {
+  const now = new Date();
+  const conversationData: Omit<Conversation, 'id'> = {
+    userId: data.userId,
+    sessionId: data.sessionId,
+    originalQuestion: data.originalQuestion,
+    intentAnswers: data.intentAnswers || null,
+    generatedPrompt: data.generatedPrompt,
+    editedPrompt: data.editedPrompt || null,
+    usedLLM: data.usedLLM || null,
+    suggestedServices: data.suggestedServices || null,
+    isPinned: data.isPinned || false,
+    projectId: data.projectId || null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - storing conversation in memory');
+    const { nanoid } = await import('nanoid');
+    const id = nanoid();
+    devMemoryStore.conversations.set(id, { id, ...conversationData });
+    return id;
   }
 
-  const result = await db.insert(promptHistory).values(data);
-  return result;
+  try {
+    const docRef = await db.collection('conversations').add(conversationData);
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create conversation:', error);
+    throw error;
+  }
 }
 
-export async function getPromptHistoryById(id: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
+export async function getConversationById(id: string): Promise<Conversation | null> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - retrieving conversation from memory');
+    return devMemoryStore.conversations.get(id) || null;
   }
 
-  const result = await db.select().from(promptHistory).where(eq(promptHistory.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
+  try {
+    const doc = await db.collection('conversations').doc(id).get();
 
-export async function getPromptHistoryByUserId(userId: number, limit: number = 20) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
+    if (!doc.exists) {
+      return null;
+    }
 
-  const result = await db
-    .select()
-    .from(promptHistory)
-    .where(eq(promptHistory.userId, userId))
-    .orderBy(desc(promptHistory.isPinned), desc(promptHistory.createdAt))
-    .limit(limit);
-
-  return result;
-}
-
-export async function updatePromptHistory(id: number, data: Partial<InsertPromptHistory>) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  await db.update(promptHistory).set(data).where(eq(promptHistory.id, id));
-}
-
-export async function deletePromptHistory(id: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  await db.delete(promptHistory).where(eq(promptHistory.id, id));
-}
-
-export async function renamePromptHistory(id: number, newName: string) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  await db.update(promptHistory)
-    .set({ originalQuestion: newName })
-    .where(eq(promptHistory.id, id));
-}
-
-export async function pinPromptHistory(id: number, isPinned: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  await db.update(promptHistory)
-    .set({ isPinned })
-    .where(eq(promptHistory.id, id));
-}
-
-// Project helpers
-export async function createProject(data: InsertProject) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  const result = await db.insert(projects).values(data);
-  return result;
-}
-
-export async function getProjectsByUserId(userId: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  const result = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.userId, userId))
-    .orderBy(desc(projects.createdAt));
-
-  return result;
-}
-
-export async function getProjectById(id: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  const result = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
-
-export async function updateProject(id: number, data: Partial<InsertProject>) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  await db.update(projects).set(data).where(eq(projects.id, id));
-}
-
-export async function deleteProject(id: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  // Delete all project conversations first
-  await db.delete(projectConversations).where(eq(projectConversations.projectId, id));
-  // Then delete the project
-  await db.delete(projects).where(eq(projects.id, id));
-}
-
-// Project Conversation helpers
-export async function addConversationToProject(projectId: number, conversationId: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  const result = await db.insert(projectConversations).values({
-    projectId,
-    conversationId,
-  });
-  return result;
-}
-
-export async function removeConversationFromProject(projectId: number, conversationId: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  await db
-    .delete(projectConversations)
-    .where(
-      and(
-        eq(projectConversations.projectId, projectId),
-        eq(projectConversations.conversationId, conversationId)
-      )
-    );
-}
-
-export async function getConversationsByProjectId(projectId: number) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  const result = await db
-    .select({
-      conversation: promptHistory,
-      addedAt: projectConversations.addedAt,
-    })
-    .from(projectConversations)
-    .innerJoin(promptHistory, eq(projectConversations.conversationId, promptHistory.id))
-    .where(eq(projectConversations.projectId, projectId))
-    .orderBy(desc(projectConversations.addedAt));
-
-  return result;
-}
-
-// Intent Template helpers
-export async function createIntentTemplate(data: InsertIntentTemplate) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  const result = await db.insert(intentTemplate).values(data);
-  return result;
-}
-
-export async function getAllIntentTemplates() {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  const result = await db.select().from(intentTemplate);
-  return result;
-}
-
-export async function getIntentTemplateByCategory(category: string) {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  const result = await db.select().from(intentTemplate).where(eq(intentTemplate.category, category)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
-
-// Prompt Template helpers
-export async function createPromptTemplate(template: InsertPromptTemplate) {
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot create template: database not available");
+    return { id: doc.id, ...doc.data() } as Conversation;
+  } catch (error) {
+    console.error('[Firestore] Failed to get conversation:', error);
     return null;
   }
-  const result = await db.insert(promptTemplates).values(template);
-  return Number(result[0].insertId);
 }
 
-export async function getUserPromptTemplates(userId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return await db.select().from(promptTemplates).where(eq(promptTemplates.userId, userId)).orderBy(desc(promptTemplates.createdAt));
-}
+export async function getConversationsByUserId(userId: string, limit: number = 20): Promise<Conversation[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - returning empty conversations');
+    return [];
+  }
 
-export async function getPromptTemplateById(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(promptTemplates).where(eq(promptTemplates.id, id)).limit(1);
-  return result.length > 0 ? result[0] : null;
-}
+  try {
+    const snapshot = await db.collection('conversations')
+      .where('userId', '==', userId)
+      .orderBy('isPinned', 'desc')
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
 
-export async function updatePromptTemplate(id: number, updates: Partial<InsertPromptTemplate>) {
-  const db = await getDb();
-  if (!db) return false;
-  await db.update(promptTemplates).set(updates).where(eq(promptTemplates.id, id));
-  return true;
-}
-
-export async function deletePromptTemplate(id: number) {
-  const db = await getDb();
-  if (!db) return false;
-  await db.delete(promptTemplates).where(eq(promptTemplates.id, id));
-  return true;
-}
-
-export async function incrementTemplateUsage(id: number) {
-  const db = await getDb();
-  if (!db) return;
-  const template = await getPromptTemplateById(id);
-  if (template) {
-    await db.update(promptTemplates).set({ usageCount: template.usageCount + 1 }).where(eq(promptTemplates.id, id));
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Conversation));
+  } catch (error) {
+    console.error('[Firestore] Failed to get conversations:', error);
+    return [];
   }
 }
 
-// Prompt Asset helpers (프롬프트 저장 + 버전 관리)
-export async function createPromptAsset(data: InsertPromptAsset) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(promptAssets).values(data);
-  return Number(result[0].insertId);
+export async function updateConversation(id: string, data: Partial<InsertConversation>): Promise<void> {
+  const updateData = {
+    ...data,
+    updatedAt: new Date(),
+  };
+
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - updating conversation in memory');
+    const existing = devMemoryStore.conversations.get(id);
+    if (existing) {
+      devMemoryStore.conversations.set(id, { ...existing, ...updateData });
+    }
+    return;
+  }
+
+  try {
+    await db.collection('conversations').doc(id).update(updateData);
+  } catch (error) {
+    console.error('[Firestore] Failed to update conversation:', error);
+    throw error;
+  }
 }
 
-export async function getPromptAssetsByUserId(userId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.select().from(promptAssets).where(eq(promptAssets.userId, userId)).orderBy(desc(promptAssets.lastModifiedAt));
-  return result;
+export async function deleteConversation(id: string): Promise<void> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - deleting conversation from memory');
+    devMemoryStore.conversations.delete(id);
+    return;
+  }
+
+  try {
+    await db.collection('conversations').doc(id).delete();
+  } catch (error) {
+    console.error('[Firestore] Failed to delete conversation:', error);
+    throw error;
+  }
 }
 
-export async function getPromptAssetById(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.select().from(promptAssets).where(eq(promptAssets.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+// ============================================================================
+// Prompt Template Functions
+// ============================================================================
+
+export async function createPromptTemplate(data: InsertPromptTemplate): Promise<string> {
+  try {
+    const now = new Date();
+    const templateData: Omit<PromptTemplate, 'id'> = {
+      userId: data.userId,
+      title: data.title,
+      description: data.description || null,
+      templateContent: data.templateContent,
+      category: data.category || null,
+      tags: data.tags || [],
+      isPublic: data.isPublic || false,
+      usageCount: data.usageCount || 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const docRef = await db.collection('promptTemplates').add(templateData);
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create prompt template:', error);
+    throw error;
+  }
 }
 
-export async function updatePromptAsset(id: number, data: Partial<InsertPromptAsset>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(promptAssets).set(data).where(eq(promptAssets.id, id));
+export async function getPromptTemplatesByUserId(userId: string): Promise<PromptTemplate[]> {
+  try {
+    const snapshot = await db.collection('promptTemplates')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as PromptTemplate));
+  } catch (error) {
+    console.error('[Firestore] Failed to get prompt templates:', error);
+    return [];
+  }
 }
 
-export async function deletePromptAsset(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(promptVersions).where(eq(promptVersions.promptAssetId, id));
-  await db.delete(promptAssets).where(eq(promptAssets.id, id));
+export async function deletePromptTemplate(id: string): Promise<void> {
+  try {
+    await db.collection('promptTemplates').doc(id).delete();
+  } catch (error) {
+    console.error('[Firestore] Failed to delete prompt template:', error);
+    throw error;
+  }
 }
 
-// Prompt Version helpers
-export async function createPromptVersion(data: InsertPromptVersion) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(promptVersions).values(data);
-  return Number(result[0].insertId);
+// ============================================================================
+// Intent Template Functions
+// ============================================================================
+
+export async function createIntentTemplate(data: InsertIntentTemplate): Promise<string> {
+  try {
+    const now = new Date();
+    const templateData: Omit<IntentTemplate, 'id'> = {
+      category: data.category,
+      keywords: data.keywords,
+      questions: data.questions,
+      defaultAnswers: data.defaultAnswers || null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const docRef = await db.collection('intentTemplates').add(templateData);
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create intent template:', error);
+    throw error;
+  }
 }
 
-export async function getPromptVersionsByAssetId(promptAssetId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.select().from(promptVersions).where(eq(promptVersions.promptAssetId, promptAssetId)).orderBy(desc(promptVersions.versionNumber));
-  return result;
+export async function getIntentTemplateByCategory(category: string): Promise<IntentTemplate | null> {
+  try {
+    const snapshot = await db.collection('intentTemplates')
+      .where('category', '==', category)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return null;
+    }
+
+    const doc = snapshot.docs[0];
+    return { id: doc.id, ...doc.data() } as IntentTemplate;
+  } catch (error) {
+    console.error('[Firestore] Failed to get intent template:', error);
+    return null;
+  }
 }
 
-export async function getPromptVersionById(versionId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.select().from(promptVersions).where(eq(promptVersions.id, versionId)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+export async function getAllIntentTemplates(): Promise<IntentTemplate[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - returning empty intent templates');
+    return [];
+  }
+
+  try {
+    const snapshot = await db.collection('intentTemplates').get();
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as IntentTemplate));
+  } catch (error) {
+    console.error('[Firestore] Failed to get all intent templates:', error);
+    return [];
+  }
 }
 
-export async function updatePromptVersion(versionId: number, data: Partial<InsertPromptVersion>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(promptVersions).set(data).where(eq(promptVersions.id, versionId));
+// ============================================================================
+// Project Functions
+// ============================================================================
+
+export async function createProject(data: InsertProject): Promise<string> {
+  try {
+    const now = new Date();
+    const projectData: Omit<Project, 'id'> = {
+      userId: data.userId,
+      name: data.name,
+      description: data.description || null,
+      color: data.color || null,
+      icon: data.icon || null,
+      conversationIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const docRef = await db.collection('projects').add(projectData);
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create project:', error);
+    throw error;
+  }
 }
 
-export async function updatePromptAssetLastUsed(assetId: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(promptAssets).set({ lastUsedAt: new Date() }).where(eq(promptAssets.id, assetId));
+export async function getProjectById(id: string): Promise<Project | null> {
+  try {
+    const doc = await db.collection('projects').doc(id).get();
+
+    if (!doc.exists) {
+      return null;
+    }
+
+    return { id: doc.id, ...doc.data() } as Project;
+  } catch (error) {
+    console.error('[Firestore] Failed to get project:', error);
+    return null;
+  }
 }
 
-export async function updatePromptAssetSuccessStatus(assetId: number, status: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(promptAssets).set({ successStatus: status }).where(eq(promptAssets.id, assetId));
+export async function getProjectsByUserId(userId: string): Promise<Project[]> {
+  try {
+    const snapshot = await db.collection('projects')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Project));
+  } catch (error) {
+    console.error('[Firestore] Failed to get projects:', error);
+    return [];
+  }
+}
+
+export async function updateProject(id: string, data: Partial<InsertProject>): Promise<void> {
+  try {
+    const updateData = {
+      ...data,
+      updatedAt: new Date(),
+    };
+
+    await db.collection('projects').doc(id).update(updateData);
+  } catch (error) {
+    console.error('[Firestore] Failed to update project:', error);
+    throw error;
+  }
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  try {
+    await db.collection('projects').doc(id).delete();
+  } catch (error) {
+    console.error('[Firestore] Failed to delete project:', error);
+    throw error;
+  }
+}
+
+export async function addConversationToProject(projectId: string, conversationId: string): Promise<void> {
+  try {
+    await db.collection('projects').doc(projectId).update({
+      conversationIds: FieldValue.arrayUnion(conversationId),
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to add conversation to project:', error);
+    throw error;
+  }
+}
+
+export async function removeConversationFromProject(projectId: string, conversationId: string): Promise<void> {
+  try {
+    await db.collection('projects').doc(projectId).update({
+      conversationIds: FieldValue.arrayRemove(conversationId),
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to remove conversation from project:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// Prompt Asset Functions
+// ============================================================================
+
+export async function createPromptAsset(data: InsertPromptAsset): Promise<string> {
+  try {
+    const now = new Date();
+    const assetData: Omit<PromptAsset, 'id'> = {
+      userId: data.userId,
+      name: data.name,
+      description: data.description || null,
+      originalQuestion: data.originalQuestion,
+      currentVersionId: data.currentVersionId || null,
+      versionCount: data.versionCount || 1,
+      lastUsedAt: null,
+      lastModifiedAt: now,
+      successStatus: 0,
+      projectId: data.projectId || null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const docRef = await db.collection('promptAssets').add(assetData);
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create prompt asset:', error);
+    throw error;
+  }
+}
+
+export async function getPromptAssetById(id: string): Promise<PromptAsset | null> {
+  try {
+    const doc = await db.collection('promptAssets').doc(id).get();
+
+    if (!doc.exists) {
+      return null;
+    }
+
+    return { id: doc.id, ...doc.data() } as PromptAsset;
+  } catch (error) {
+    console.error('[Firestore] Failed to get prompt asset:', error);
+    return null;
+  }
+}
+
+export async function createPromptVersion(assetId: string, data: InsertPromptVersion): Promise<string> {
+  try {
+    const now = new Date();
+    const versionData: Omit<PromptVersion, 'id'> = {
+      userId: data.userId,
+      versionNumber: data.versionNumber,
+      generatedPrompt: data.generatedPrompt,
+      editedPrompt: data.editedPrompt || null,
+      intentAnswers: data.intentAnswers || null,
+      usedLLM: data.usedLLM || null,
+      suggestedServices: data.suggestedServices || null,
+      notes: data.notes || null,
+      successStatus: data.successStatus || 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const docRef = await db
+      .collection('promptAssets')
+      .doc(assetId)
+      .collection('versions')
+      .add(versionData);
+
+    // Update asset version count
+    await db.collection('promptAssets').doc(assetId).update({
+      versionCount: FieldValue.increment(1),
+      currentVersionId: docRef.id,
+      updatedAt: now,
+    });
+
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create prompt version:', error);
+    throw error;
+  }
+}
+
+export async function getPromptVersionsByAssetId(assetId: string): Promise<PromptVersion[]> {
+  try {
+    const snapshot = await db
+      .collection('promptAssets')
+      .doc(assetId)
+      .collection('versions')
+      .orderBy('versionNumber', 'desc')
+      .get();
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as PromptVersion));
+  } catch (error) {
+    console.error('[Firestore] Failed to get prompt versions:', error);
+    return [];
+  }
+}
+
+// ============================================================================
+// Compatibility Aliases (for backward compatibility with old MySQL code)
+// ============================================================================
+
+// Rename Conversation functions to match old promptHistory naming
+export const createPromptHistory = createConversation;
+export const getPromptHistoryById = getConversationById;
+export const getPromptHistoryByUserId = getConversationsByUserId;
+export const updatePromptHistory = updateConversation;
+export const deletePromptHistory = deleteConversation;
+
+// Placeholder functions that don't exist yet but are referenced
+export async function getConversationsByProjectId(projectId: string): Promise<Conversation[]> {
+  const project = await getProjectById(projectId);
+  if (!project) return [];
+  
+  const conversations: Conversation[] = [];
+  for (const convId of project.conversationIds) {
+    const conv = await getConversationById(convId);
+    if (conv) conversations.push(conv);
+  }
+  return conversations;
+}
+
+export async function getPromptAssetsByUserId(userId: string): Promise<PromptAsset[]> {
+  try {
+    const snapshot = await db.collection('promptAssets')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as PromptAsset));
+  } catch (error) {
+    console.error('[Firestore] Failed to get prompt assets:', error);
+    return [];
+  }
+}
+
+export async function updatePromptAsset(id: string, data: Partial<InsertPromptAsset>): Promise<void> {
+  try {
+    await db.collection('promptAssets').doc(id).update({
+      ...data,
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to update prompt asset:', error);
+    throw error;
+  }
+}
+
+export async function deletePromptAsset(id: string): Promise<void> {
+  try {
+    await db.collection('promptAssets').doc(id).delete();
+  } catch (error) {
+    console.error('[Firestore] Failed to delete prompt asset:', error);
+    throw error;
+  }
+}
+
+export async function getPromptVersionById(assetId: string, versionId: string): Promise<PromptVersion | null> {
+  try {
+    const doc = await db
+      .collection('promptAssets')
+      .doc(assetId)
+      .collection('versions')
+      .doc(versionId)
+      .get();
+
+    if (!doc.exists) {
+      return null;
+    }
+
+    return { id: doc.id, ...doc.data() } as PromptVersion;
+  } catch (error) {
+    console.error('[Firestore] Failed to get prompt version:', error);
+    return null;
+  }
+}
+
+export async function updatePromptVersion(assetId: string, versionId: string, data: Partial<InsertPromptVersion>): Promise<void> {
+  try {
+    await db
+      .collection('promptAssets')
+      .doc(assetId)
+      .collection('versions')
+      .doc(versionId)
+      .update({
+        ...data,
+        updatedAt: new Date(),
+      });
+  } catch (error) {
+    console.error('[Firestore] Failed to update prompt version:', error);
+    throw error;
+  }
+}
+
+export async function updatePromptAssetLastUsed(id: string): Promise<void> {
+  try {
+    await db.collection('promptAssets').doc(id).update({
+      lastUsedAt: new Date(),
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to update last used:', error);
+    throw error;
+  }
+}
+
+export async function updatePromptAssetSuccessStatus(id: string, status: number): Promise<void> {
+  try {
+    await db.collection('promptAssets').doc(id).update({
+      successStatus: status,
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to update success status:', error);
+    throw error;
+  }
 }

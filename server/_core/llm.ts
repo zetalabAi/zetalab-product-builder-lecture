@@ -193,8 +193,63 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     response_format,
   } = params;
 
+  // 개발 모드: Gemini API 키 없이도 작동 (목 응답)
+  if (process.env.NODE_ENV === "development" && !process.env.GEMINI_API_KEY) {
+    console.log('[invokeLLM] Dev mode: Using mock response (no Gemini API key)');
+
+    // 사용자 메시지 추출
+    const userMessages = messages
+      .filter(m => m.role === "user")
+      .map(m => typeof m.content === "string" ? m.content : "")
+      .join("\n");
+
+    // 목 프롬프트 생성
+    const mockPrompt = `# 고품질 프롬프트 (개발 모드 샘플)
+
+당신은 "${userMessages}"에 대한 전문가입니다.
+
+## 목표
+사용자가 제공한 정보를 바탕으로 명확하고 구체적인 결과물을 생성하세요.
+
+## 요구사항
+1. 사용자의 의도를 정확히 파악하여 반영
+2. 전문적이고 체계적인 구조
+3. 실행 가능한 구체적인 지침
+4. 예상되는 결과물의 형태와 품질 기준 명시
+
+## 실행 방법
+1. 제공된 정보를 분석
+2. 핵심 요소 추출
+3. 단계별 실행 계획 수립
+4. 품질 검증 기준 적용
+
+## 검증 기준
+- 요구사항 충족도
+- 실행 가능성
+- 결과물의 완성도
+
+**참고**: 이 프롬프트는 개발 모드에서 생성된 샘플입니다.
+실제 Gemini API를 사용하려면 .env 파일에 GEMINI_API_KEY를 설정하세요.`;
+
+    return {
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: mockPrompt,
+            tool_calls: undefined,
+          },
+          finish_reason: "stop",
+        },
+      ],
+    };
+  }
+
   const ai = getGenAI();
-  const modelName = "gemini-2.0-flash-exp";
+
+  // Primary model: Gemini 2.5 Flash Lite
+  const primaryModel = "gemini-2.5-flash-lite";
+  const fallbackModel = "gemini-1.5-flash";
 
   // Convert messages
   const { geminiMessages, systemInstruction } = convertToGeminiMessages(messages);
@@ -220,43 +275,79 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     }
   }
 
-  // Create model with configuration
-  const model = ai.getGenerativeModel({
-    model: modelName,
-    generationConfig,
-    systemInstruction: systemInstruction || undefined,
-  });
+  // Helper function to try generating with a specific model
+  const tryGenerate = async (modelName: string, retries: number = 3) => {
+    console.log(`[invokeLLM] Trying model: ${modelName}`);
 
-  // Start chat session
-  const chat = model.startChat({
-    history: geminiMessages.slice(0, -1), // All but last message
-  });
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const model = ai.getGenerativeModel({
+          model: modelName,
+          generationConfig,
+          systemInstruction: systemInstruction || undefined,
+        });
 
-  // Send last message
-  const lastMessage = geminiMessages[geminiMessages.length - 1];
-  const result = await chat.sendMessage(lastMessage.parts[0].text);
-  const response = result.response;
-  const text = response.text();
+        const chat = model.startChat({
+          history: geminiMessages.slice(0, -1),
+        });
 
-  // Convert to OpenAI-compatible format
-  return {
-    id: `gemini-${Date.now()}`,
-    created: Math.floor(Date.now() / 1000),
-    model: modelName,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: "assistant",
-          content: text,
-        },
-        finish_reason: "stop",
-      },
-    ],
-    usage: {
-      prompt_tokens: 0, // Gemini doesn't provide this directly
-      completion_tokens: 0,
-      total_tokens: 0,
-    },
+        const lastMessage = geminiMessages[geminiMessages.length - 1];
+        const result = await chat.sendMessage(lastMessage.parts[0].text);
+        const response = result.response;
+        const text = response.text();
+
+        console.log(`[invokeLLM] Success with ${modelName} on attempt ${attempt}`);
+
+        return {
+          id: `gemini-${Date.now()}`,
+          created: Math.floor(Date.now() / 1000),
+          model: modelName,
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: text,
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+          },
+        };
+      } catch (error: any) {
+        const is503 = error.message?.includes('503') || error.message?.includes('overloaded');
+        const isLastAttempt = attempt === retries;
+
+        if (is503 && !isLastAttempt) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+          console.log(`[invokeLLM] Model ${modelName} overloaded (attempt ${attempt}/${retries}), retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        // Re-throw on last attempt or non-503 errors
+        throw error;
+      }
+    }
   };
+
+  // Try primary model first
+  try {
+    return await tryGenerate(primaryModel, 3);
+  } catch (primaryError: any) {
+    console.log(`[invokeLLM] Primary model ${primaryModel} failed, trying fallback ${fallbackModel}...`);
+    console.error(`[invokeLLM] Primary error:`, primaryError.message);
+
+    // Try fallback model
+    try {
+      return await tryGenerate(fallbackModel, 2);
+    } catch (fallbackError: any) {
+      console.error(`[invokeLLM] Fallback model ${fallbackModel} also failed:`, fallbackError.message);
+      throw new Error(`Both models failed. Primary: ${primaryError.message}, Fallback: ${fallbackError.message}`);
+    }
+  }
 }

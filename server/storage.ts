@@ -1,5 +1,5 @@
 // Firebase Storage helpers for ZetaLab
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 
 // Initialize Firebase Admin if not already initialized
 let storage: admin.storage.Storage | null = null;

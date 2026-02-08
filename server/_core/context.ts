@@ -1,7 +1,7 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
-import type { User } from "../db-firestore";
+import type { User } from "../db";
 import { verifyFirebaseSession } from "./firebase-auth";
-import { getUserByUid } from "../db-firestore";
+import { getUserByUid } from "../db";
 import { COOKIE_NAME } from "@shared/const";
 import crypto from "crypto";
 
@@ -20,10 +20,42 @@ export type TrpcContext = {
   user: User | null;
 };
 
+// 개발 모드 메모리 사용자 (Firestore 없이 작동)
+let devMockUser: User | null = null;
+
 export async function createContext(
   opts: CreateExpressContextOptions
 ): Promise<TrpcContext> {
   let user: User | null = null;
+
+  // 개발 모드: 자동 로그인 (Firebase 프로젝트 없이 테스트 가능)
+  if (process.env.NODE_ENV === "development" && process.env.DEV_AUTO_LOGIN === "true") {
+    // 메모리에 테스트 사용자 생성 (Firestore 사용 안 함)
+    if (!devMockUser) {
+      devMockUser = {
+        id: 1,
+        uid: "dev-test-user",
+        openId: "dev-test-user",
+        name: "개발 테스트 사용자",
+        email: "dev@test.com",
+        loginMethod: "development",
+        role: "user" as const,
+        manusLinked: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastSignedIn: new Date()
+      };
+      authTrace("dev auto login - mock user created", { user: devMockUser });
+    }
+
+    user = devMockUser;
+
+    return {
+      req: opts.req,
+      res: opts.res,
+      user,
+    };
+  }
 
   try {
     // Verify Firebase session cookie

@@ -1,21 +1,61 @@
 // Firebase Authentication helpers for ZetaLab
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 import type { Express, Request, Response } from "express";
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS, TWO_WEEKS_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import * as db from "../db";
 
 // Initialize Firebase Admin if not already initialized
 function initializeFirebase() {
-  if (admin.apps.length === 0) {
+  if (admin.apps.length > 0) {
+    console.log('[Firebase Admin] Already initialized');
+    return;
+  }
+
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+
+  if (!projectId) {
+    console.error('[Firebase Admin] FIREBASE_PROJECT_ID environment variable is missing');
+    throw new Error('FIREBASE_PROJECT_ID environment variable is required');
+  }
+
+  console.log(`[Firebase Admin] Initializing with project: ${projectId}`);
+
+  try {
+    // Try to initialize with Application Default Credentials
     admin.initializeApp({
       credential: admin.credential.applicationDefault(),
-      projectId: process.env.FIREBASE_PROJECT_ID || 'zetalab-product-builder'
+      projectId: projectId
     });
+    console.log('[Firebase Admin] ✓ Successfully initialized with Application Default Credentials');
+  } catch (error: any) {
+    // Fallback: Initialize without credentials for development
+    console.warn('[Firebase Admin] ⚠ Application Default Credentials not found');
+    console.warn('[Firebase Admin] ⚠ Error:', error?.message || error);
+    console.warn('[Firebase Admin] ⚠ Initializing in development mode (limited functionality)');
+    console.warn('[Firebase Admin] ⚠ For production, please configure one of the following:');
+    console.warn('[Firebase Admin]   1. Set GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json');
+    console.warn('[Firebase Admin]   2. Run: gcloud auth application-default login');
+
+    try {
+      // Initialize with cert if available, otherwise minimal config
+      admin.initializeApp({
+        projectId: projectId
+      });
+      console.log('[Firebase Admin] ✓ Initialized in development mode');
+    } catch (initError: any) {
+      console.error('[Firebase Admin] ✗ Failed to initialize:', initError?.message || initError);
+      throw initError;
+    }
   }
 }
 
-initializeFirebase();
+// Initialize on module load
+try {
+  initializeFirebase();
+} catch (error) {
+  console.error('[Firebase Admin] Fatal initialization error:', error);
+}
 
 /**
  * Verify Firebase ID token from request
@@ -26,8 +66,50 @@ export async function verifyIdToken(idToken: string) {
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     return decodedToken;
-  } catch (error) {
-    console.error('[Firebase Auth] Token verification failed:', error);
+  } catch (error: any) {
+    console.error('[Firebase Auth] Token verification failed:', error?.message || error);
+
+    // If the error is due to missing credentials, try alternative verification
+    if (error?.message?.includes('Could not load the default credentials') ||
+        error?.message?.includes('Application Default Credentials')) {
+      console.warn('[Firebase Auth] Falling back to public key verification');
+
+      // Import jwt-decode for fallback verification
+      try {
+        // Use Firebase REST API for public verification
+        const response = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${process.env.VITE_FIREBASE_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken })
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error('Token verification via REST API failed');
+        }
+
+        const data = await response.json();
+        if (data.users && data.users[0]) {
+          const user = data.users[0];
+          // Return a structure similar to admin.auth().DecodedIdToken
+          return {
+            uid: user.localId,
+            email: user.email,
+            email_verified: user.emailVerified,
+            name: user.displayName,
+            picture: user.photoUrl,
+            firebase: {
+              sign_in_provider: user.providerUserInfo?.[0]?.providerId || 'unknown'
+            }
+          } as any;
+        }
+      } catch (fallbackError) {
+        console.error('[Firebase Auth] Fallback verification failed:', fallbackError);
+      }
+    }
+
     throw new Error('Invalid authentication token');
   }
 }
@@ -35,17 +117,36 @@ export async function verifyIdToken(idToken: string) {
 /**
  * Create a session cookie for the user
  * @param idToken - Firebase ID token
- * @param expiresIn - Session duration in milliseconds
+ * @param expiresIn - Session duration in milliseconds (max 2 weeks for Firebase)
  * @returns Session cookie string
  */
-export async function createSessionCookie(idToken: string, expiresIn: number = ONE_YEAR_MS) {
+export async function createSessionCookie(idToken: string, expiresIn: number = TWO_WEEKS_MS) {
+  // Firebase requires session cookie duration between 5 minutes and 2 weeks
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+  const MAX_SESSION_MS = TWO_WEEKS_MS;
+
+  // Clamp the value to Firebase's allowed range
+  const validExpiresIn = Math.min(Math.max(expiresIn, FIVE_MINUTES_MS), MAX_SESSION_MS);
+
   try {
     const sessionCookie = await admin.auth().createSessionCookie(idToken, {
-      expiresIn,
+      expiresIn: validExpiresIn,
     });
     return sessionCookie;
-  } catch (error) {
-    console.error('[Firebase Auth] Session cookie creation failed:', error);
+  } catch (error: any) {
+    console.error('[Firebase Auth] Session cookie creation failed:', error?.message || error);
+
+    // If credentials are missing, use the idToken as session cookie (dev fallback)
+    if (error?.message?.includes('Could not load the default credentials') ||
+        error?.message?.includes('Application Default Credentials')) {
+      console.warn('[Firebase Auth] Using idToken as session cookie (development mode)');
+      console.warn('[Firebase Auth] For production, please set up Firebase Admin SDK credentials');
+
+      // In development, we can use the ID token directly as a session token
+      // This is NOT recommended for production
+      return idToken;
+    }
+
     throw new Error('Failed to create session cookie');
   }
 }
@@ -59,8 +160,22 @@ export async function verifySessionCookie(sessionCookie: string) {
   try {
     const decodedClaims = await admin.auth().verifySessionCookie(sessionCookie, true);
     return decodedClaims;
-  } catch (error) {
-    console.error('[Firebase Auth] Session verification failed:', error);
+  } catch (error: any) {
+    console.error('[Firebase Auth] Session verification failed:', error?.message || error);
+
+    // Fallback: Try to verify as ID token (development mode)
+    if (error?.message?.includes('Could not load the default credentials') ||
+        error?.message?.includes('Application Default Credentials') ||
+        error?.code === 'auth/argument-error') {
+      try {
+        // Try verifying as an ID token instead
+        const decodedToken = await verifyIdToken(sessionCookie);
+        return decodedToken;
+      } catch (fallbackError) {
+        console.error('[Firebase Auth] Fallback session verification failed:', fallbackError);
+      }
+    }
+
     return null;
   }
 }
@@ -101,8 +216,8 @@ export function registerFirebaseAuthRoutes(app: Express) {
       // Verify the ID token
       const decodedToken = await verifyIdToken(idToken);
 
-      // Create session cookie
-      const sessionCookie = await createSessionCookie(idToken, ONE_YEAR_MS);
+      // Create session cookie (Firebase max: 2 weeks)
+      const sessionCookie = await createSessionCookie(idToken, TWO_WEEKS_MS);
 
       // Get user info from Firebase
       const userRecord = await getUserByUid(decodedToken.uid);
