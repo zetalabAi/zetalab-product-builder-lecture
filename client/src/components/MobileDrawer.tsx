@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { X, Menu, Container, ChevronUp, ChevronDown, Plus, Search, MessageSquare, Box, FolderOpen, Trash2, Clock, Edit2, Pin, PinOff } from "lucide-react";
+import { X, Menu, Container, ChevronUp, ChevronDown, Plus, Search, MessageSquare, Box, FolderOpen, Trash2, Clock, Edit2, Pin, PinOff, Home, FileText } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation, Link } from "wouter";
 import { getLoginUrl } from "@/const";
@@ -102,22 +102,20 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
   // 삭제 확인 다이얼로그
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  // 웹 버전과 동일한 메뉴 항목
+  // PC 버전과 동일한 메뉴 항목
   const menuItems = [
-    { icon: MessageSquare, label: "채팅", path: "/history" },
-    { icon: Box, label: "아티팩트", path: "#", disabled: true },
-    { icon: FolderOpen, label: "프로젝트", path: "#", action: "projects" },
+    { icon: Home, label: "홈", path: "/" },
+    { icon: FileText, label: "내 프롬프트", path: "/my-work" },
+    { icon: FolderOpen, label: "프로젝트", path: "/projects" },
   ];
 
-  // Builder Box 항목 - 웹 버전과 동일
+  // Builder Box 항목 - PC 버전과 동일
   const builderBoxItems = [
     { label: "Zeta Blog", path: "#" },
     { label: "Zeta Shorts", path: "#" },
     { label: "Zeta PPT", path: "#" },
     { label: "Zeta Foto", path: "#" },
     { label: "Zeta Docs", path: "#" },
-    { label: "Zeta Web/App", path: "#" },
-    { label: "Zeta UIUX", path: "#" },
   ];
 
   // 대화 목록 가져오기
@@ -173,18 +171,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
     onClose();
   };
 
-  const handleMenuItemClick = (path: string, disabled?: boolean, action?: string) => {
-    if (disabled) {
-      toast.info("준비중입니다");
-      return;
-    }
-
-    if (action === "projects") {
-      navigate("/projects");
-      onClose();
-      return;
-    }
-
+  const handleMenuItemClick = (path: string) => {
     navigate(path);
     onClose();
   };
@@ -297,9 +284,10 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
 
       {/* Drawer */}
       <div
-        className={`fixed top-0 left-0 h-full w-80 bg-background border-r border-border z-50 transform transition-transform duration-300 md:hidden flex flex-col ${
+        className={`fixed top-0 left-0 h-full w-80 bg-background border-r border-border z-50 transform transition-transform duration-200 md:hidden flex flex-col safe-area-inset ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
+        style={{ touchAction: 'pan-y' }}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border">
@@ -322,10 +310,10 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
           <div className="p-4">
             <Button
               onClick={handleNewChat}
-              className="w-full"
+              className="w-full min-h-[48px] touch-manipulation active:scale-[0.98] transition-transform"
               size="lg"
             >
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-5 w-5 mr-2" />
               새 채팅
             </Button>
           </div>
@@ -344,16 +332,12 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
           </div>
 
           {/* Menu Items */}
-          <div className="px-2 pb-3 space-y-1">
+          <div className="px-2 pb-3 space-y-2">
             {menuItems.map((item) => (
               <button
                 key={item.label}
-                onClick={() => handleMenuItemClick(item.path, item.disabled, item.action)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                  item.disabled
-                    ? "text-muted-foreground cursor-not-allowed"
-                    : "hover:bg-secondary"
-                }`}
+                onClick={() => handleMenuItemClick(item.path)}
+                className="w-full flex items-center gap-3 px-3 py-3 min-h-[48px] rounded-lg transition-all touch-manipulation hover:bg-secondary active:scale-[0.98]"
               >
                 <item.icon className="h-5 w-5" />
                 <span className="text-sm font-medium">{item.label}</span>
@@ -402,10 +386,10 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
           {/* Divider */}
           <div className="mx-4 mb-3 border-t border-border" />
 
-          {/* 모든 작업 (대화 목록) */}
+          {/* 히스토리 (대화 목록) */}
           <div className="flex-1 overflow-hidden px-2">
             <div className="text-xs font-medium text-muted-foreground px-2 mb-2">
-              모든 작업
+              히스토리
             </div>
             <ScrollArea className="h-full [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               <div className="space-y-1 pb-4">
