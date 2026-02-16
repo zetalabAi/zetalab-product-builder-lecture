@@ -6,6 +6,7 @@ import { signInWithGoogle, signInWithEmail, signUpWithEmail } from "@/lib/fireba
 import { toast } from "sonner";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { FirebaseError } from "firebase/app";
 
 interface LoginModalProps {
   open: boolean;
@@ -25,9 +26,10 @@ export function LoginModal({ open, onOpenChange }: LoginModalProps) {
       // signInWithGoogle now uses redirect, so this will redirect the page
       await signInWithGoogle();
       // Note: Code after this won't execute as the page will redirect
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Login failed:", error);
-      toast.error(error.message || "로그인에 실패했습니다. 다시 시도해주세요.");
+      const message = error instanceof Error ? error.message : "로그인에 실패했습니다. 다시 시도해주세요.";
+      toast.error(message);
       setIsLoading(false);
     }
   };
@@ -64,23 +66,25 @@ export function LoginModal({ open, onOpenChange }: LoginModalProps) {
       // Reset form
       setEmail("");
       setPassword("");
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Auth failed:", error);
 
       // Firebase 에러 메시지를 한글로 변환
       let errorMessage = "인증에 실패했습니다.";
-      if (error.code === "auth/email-already-in-use") {
-        errorMessage = "이미 사용 중인 이메일입니다.";
-      } else if (error.code === "auth/invalid-email") {
-        errorMessage = "유효하지 않은 이메일 형식입니다.";
-      } else if (error.code === "auth/user-not-found") {
-        errorMessage = "존재하지 않는 사용자입니다.";
-      } else if (error.code === "auth/wrong-password") {
-        errorMessage = "잘못된 비밀번호입니다.";
-      } else if (error.code === "auth/weak-password") {
-        errorMessage = "비밀번호가 너무 약합니다. 6자 이상 입력해주세요.";
-      } else if (error.code === "auth/too-many-requests") {
-        errorMessage = "너무 많은 시도가 있었습니다. 잠시 후 다시 시도해주세요.";
+      if (error instanceof FirebaseError) {
+        if (error.code === "auth/email-already-in-use") {
+          errorMessage = "이미 사용 중인 이메일입니다.";
+        } else if (error.code === "auth/invalid-email") {
+          errorMessage = "유효하지 않은 이메일 형식입니다.";
+        } else if (error.code === "auth/user-not-found") {
+          errorMessage = "존재하지 않는 사용자입니다.";
+        } else if (error.code === "auth/wrong-password") {
+          errorMessage = "잘못된 비밀번호입니다.";
+        } else if (error.code === "auth/weak-password") {
+          errorMessage = "비밀번호가 너무 약합니다. 6자 이상 입력해주세요.";
+        } else if (error.code === "auth/too-many-requests") {
+          errorMessage = "너무 많은 시도가 있었습니다. 잠시 후 다시 시도해주세요.";
+        }
       }
 
       toast.error(errorMessage);

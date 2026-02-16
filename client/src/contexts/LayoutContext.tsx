@@ -27,13 +27,18 @@ export const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
   // Initialize state from localStorage
   const [leftPanelOpen, setLeftPanelOpen] = useState<boolean>(() => {
     try {
+      // Check if localStorage is available (e.g., not in private browsing mode)
+      if (typeof localStorage === 'undefined') {
+        return true;
+      }
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
         return parsed.leftPanelOpen ?? true;
       }
     } catch (error) {
-      console.error('Failed to parse layout state:', error);
+      // Handle both JSON parse errors and localStorage access errors
+      console.error('Failed to load layout state:', error);
     }
     return true; // Default: left panel open
   });
@@ -45,11 +50,14 @@ export const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
   // Save state to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ leftPanelOpen })
-      );
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ leftPanelOpen })
+        );
+      }
     } catch (error) {
+      // Handle quota exceeded or access denied errors
       console.error('Failed to save layout state:', error);
     }
   }, [leftPanelOpen]);

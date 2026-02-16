@@ -173,10 +173,14 @@ export default function IntentClarification() {
   };
 
   const handleSubmit = () => {
+    // Find skipped questions (questions without answers)
+    const skippedQuestions = questions.filter(q => !answers[q] || answers[q].trim() === '');
+
     generateMutation.mutate({
       sessionId,
       originalQuestion,
       answers,
+      skippedQuestions,
     });
   };
 
@@ -204,7 +208,7 @@ export default function IntentClarification() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-full flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
           <p className="mt-4 text-muted-foreground">로딩 중...</p>
@@ -214,7 +218,7 @@ export default function IntentClarification() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-6 custom-scrollbar">
+    <div className="flex flex-col items-center justify-center p-4 md:p-6 py-8 custom-scrollbar min-h-[calc(100vh-4rem)]">
       <div className="w-full max-w-3xl mx-auto space-y-4 md:space-y-6">
         {/* Header - 모바일 최적화 */}
         <div className="text-center space-y-2">
@@ -239,7 +243,7 @@ export default function IntentClarification() {
           </div>
           <div className="w-full h-2.5 md:h-2 bg-secondary rounded-full overflow-hidden">
             <div
-              className="h-full bg-primary transition-all duration-300"
+              className="h-full bg-primary transition-all duration-200"
               style={{ width: `${((currentQuestionIndex + 1) / questions.length) * 100}%` }}
             />
           </div>

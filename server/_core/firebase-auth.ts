@@ -332,10 +332,24 @@ export function registerFirebaseAuthRoutes(app: Express) {
 }
 
 /**
- * Middleware to verify Firebase session cookie
+ * Middleware to verify Firebase session cookie or Authorization header
  * Attaches user info to req.user
  */
 export async function verifyFirebaseSession(req: Request): Promise<admin.auth.DecodedIdToken | null> {
+  // First, try Authorization header (for ID tokens)
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const idToken = authHeader.substring(7); // Remove 'Bearer ' prefix
+    try {
+      const decodedToken = await verifyIdToken(idToken);
+      return decodedToken;
+    } catch (error) {
+      console.error('[Firebase Auth] Authorization header verification failed:', error);
+      // Continue to try session cookie
+    }
+  }
+
+  // Fallback to session cookie
   const sessionCookie = req.cookies?.[COOKIE_NAME];
 
   if (!sessionCookie) {

@@ -6,6 +6,15 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { getAllIntentTemplates, createPromptHistory, updatePromptHistory, getPromptHistoryByUserId, getPromptHistoryById, createProject, getProjectsByUserId, getProjectById, updateProject, deleteProject, addConversationToProject, removeConversationFromProject, getConversationsByProjectId, updateUserManusLinked, createPromptAsset, getPromptAssetsByUserId, getPromptAssetById, updatePromptAsset, deletePromptAsset, createPromptVersion, getPromptVersionsByAssetId, getPromptVersionById, updatePromptVersion, updatePromptAssetLastUsed, updatePromptAssetSuccessStatus } from "./db";
 import { notifyOwner } from "./_core/notification";
+import { qualityRouter } from "./routers/quality";
+import { versionsRouter } from "./routers/versions";
+import { playgroundRouter } from "./routers/playground";
+import { templatesRouter } from "./routers/templates";
+import { improveRouter } from "./routers/improve";
+import { progressRouter } from "./routers/progress";
+import { coursesRouter } from "./routers/courses";
+import { chainsRouter } from "./routers/chains";
+import { usersRouter } from "./routers/users";
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -791,19 +800,46 @@ export const appRouter = router({
           title: `새로운 피드백: ${input.name}`,
           content: `이름: ${input.name}\n이메일: ${input.email}\n\n메시지:\n${input.message}`,
         });
-        
+
         if (!delivered) {
-          throw new TRPCError({ 
-            code: 'INTERNAL_SERVER_ERROR', 
-            message: '피드백 전송에 실패했습니다. 잠시 후 다시 시도해 주세요.' 
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: '피드백 전송에 실패했습니다. 잠시 후 다시 시도해 주세요.'
           });
         }
-        
+
         return {
           success: true
         };
       }),
   }),
+
+  // Quality Scoring
+  quality: qualityRouter,
+
+  // Version Management
+  versions: versionsRouter,
+
+  // AI Playground
+  playground: playgroundRouter,
+
+  // Template Library
+  templates: templatesRouter,
+
+  // Auto Improvement
+  improve: improveRouter,
+
+  // Learning Progress
+  progress: progressRouter,
+
+  // Learning Courses
+  courses: coursesRouter,
+
+  // Prompt Chains
+  chains: chainsRouter,
+
+  // User Management
+  users: usersRouter,
 });
 
 export type AppRouter = typeof appRouter;

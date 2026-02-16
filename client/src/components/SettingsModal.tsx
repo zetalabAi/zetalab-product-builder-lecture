@@ -7,10 +7,11 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { ChevronRight, ChevronLeft, User, Shield, CreditCard, Zap, Link as LinkIcon, LogOut, X } from "lucide-react";
+import { ChevronRight, ChevronLeft, User, Shield, CreditCard, Zap, Link as LinkIcon, LogOut, X, Download } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { DeleteAccountModal } from "@/components/DeleteAccountModal";
 
 const settingsSections = [
   { id: "general", label: "일반" },
@@ -32,6 +33,7 @@ export function SettingsModal({ open, onOpenChange, defaultTab }: SettingsModalP
   const { theme, toggleTheme } = useTheme();
   const [, navigate] = useLocation();
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -83,6 +85,25 @@ export function SettingsModal({ open, onOpenChange, defaultTab }: SettingsModalP
     },
   });
 
+  const deleteAccountMutation = trpc.users.deleteAccount.useMutation({
+    onSuccess: () => {
+      toast.success("계정이 삭제되었습니다");
+      setShowDeleteModal(false);
+      onOpenChange(false);
+      navigate("/");
+      // Clear all local storage and reload
+      localStorage.clear();
+      setTimeout(() => window.location.reload(), 500);
+    },
+    onError: (error) => {
+      toast.error(`계정 삭제 실패: ${error.message}`);
+    },
+  });
+
+  const downloadDataQuery = trpc.users.downloadMyData.useQuery(undefined, {
+    enabled: false,
+  });
+
   const handleSectionClick = (sectionId: string, comingSoon?: boolean) => {
     if (comingSoon) {
       toast.info("준비중. 진짜 곷 나와요!");
@@ -101,6 +122,33 @@ export function SettingsModal({ open, onOpenChange, defaultTab }: SettingsModalP
 
   const handleLogout = () => {
     logoutMutation.mutate();
+  };
+
+  const handleDeleteAccount = () => {
+    deleteAccountMutation.mutate();
+  };
+
+  const handleDownloadData = async () => {
+    try {
+      const data = await downloadDataQuery.refetch();
+      if (data.data) {
+        // Create a JSON blob and download it
+        const blob = new Blob([JSON.stringify(data.data, null, 2)], {
+          type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `zetalab-data-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        toast.success("데이터가 다운로드되었습니다");
+      }
+    } catch (error) {
+      toast.error("데이터 다운로드에 실패했습니다");
+    }
   };
 
   const handleClose = () => {
@@ -200,13 +248,38 @@ export function SettingsModal({ open, onOpenChange, defaultTab }: SettingsModalP
               <Separator className="bg-border" />
 
               <div>
+                <h3 className="text-base font-medium mb-4">데이터 관리</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  내 데이터를 다운로드하거나 계정을 삭제할 수 있습니다 (GDPR)
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={handleDownloadData}
+                    disabled={downloadDataQuery.isFetching}
+                  >
+                    {downloadDataQuery.isFetching ? (
+                      "다운로드 중..."
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-4 w-4" />
+                        내 데이터 다운로드
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              <Separator className="bg-border" />
+
+              <div>
                 <h3 className="text-base font-medium mb-4">계정 삭제</h3>
                 <p className="text-sm text-muted-foreground mb-4">
                   계정을 삭제하면 모든 데이터가 영구적으로 삭제됩니다
                 </p>
                 <Button
                   variant="destructive"
-                  onClick={() => toast.info("준비중. 진짜 곧 나와요!")}
+                  onClick={() => setShowDeleteModal(true)}
                 >
                   계정 삭제
                 </Button>
@@ -519,16 +592,26 @@ export function SettingsModal({ open, onOpenChange, defaultTab }: SettingsModalP
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[95vw] w-full h-[90vh] md:max-w-5xl md:h-[85vh] p-0 gap-0" showCloseButton={false}>
-        {/* 모바일 (768px 이하) */}
-        <div className="md:hidden h-full">
-          {activeSection ? renderMobileDetail() : renderMobileHome()}
-        </div>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-[95vw] w-full h-[90vh] md:max-w-5xl md:h-[85vh] p-0 gap-0" showCloseButton={false}>
+          {/* 모바일 (768px 이하) */}
+          <div className="md:hidden h-full">
+            {activeSection ? renderMobileDetail() : renderMobileHome()}
+          </div>
 
-        {/* 데스크톱 (768px 이상) */}
-        <div className="hidden md:block h-full">{renderDesktopLayout()}</div>
-      </DialogContent>
-    </Dialog>
+          {/* 데스크톱 (768px 이상) */}
+          <div className="hidden md:block h-full">{renderDesktopLayout()}</div>
+        </DialogContent>
+      </Dialog>
+
+      <DeleteAccountModal
+        open={showDeleteModal}
+        onOpenChange={setShowDeleteModal}
+        onConfirm={handleDeleteAccount}
+        isDeleting={deleteAccountMutation.isPending}
+        userEmail={user?.email}
+      />
+    </>
   );
 }

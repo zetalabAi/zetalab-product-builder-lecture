@@ -27,6 +27,9 @@ initializeFirebase();
 
 const db = isDevModeWithoutFirebase ? null : admin.firestore();
 
+// Export db instance for routers that need direct Firestore access
+export { db };
+
 // ============================================================================
 // Dev Mode In-Memory Storage
 // ============================================================================
@@ -36,11 +39,21 @@ const devMemoryStore: {
   promptAssets: Map<string, PromptAsset>;
   promptVersions: Map<string, PromptVersion>;
   projects: Map<string, Project>;
+  courses: Map<string, Course>;
+  userCourseProgress: Map<string, UserCourseProgress>;
+  chains: Map<string, PromptChain>;
+  chainExecutions: Map<string, ChainExecution>;
+  chainTemplates: Map<string, ChainTemplate>;
 } = {
   conversations: new Map(),
   promptAssets: new Map(),
   promptVersions: new Map(),
   projects: new Map(),
+  courses: new Map(),
+  userCourseProgress: new Map(),
+  chains: new Map(),
+  chainExecutions: new Map(),
+  chainTemplates: new Map(),
 };
 
 // ============================================================================
@@ -70,6 +83,15 @@ export interface InsertUser {
   lastSignedIn?: Date;
 }
 
+export interface TemplateVariable {
+  name: string;           // "topic"
+  label: string;          // "블로그 주제"
+  placeholder: string;    // "예: AI 트렌드"
+  required: boolean;
+  type: 'text' | 'textarea' | 'select';
+  options?: string[];     // for select type
+}
+
 export interface PromptTemplate {
   id: string;
   userId: string;
@@ -82,6 +104,8 @@ export interface PromptTemplate {
   usageCount: number;
   createdAt: Date;
   updatedAt: Date;
+  isOfficial: boolean;           // NEW: ZetaLab official templates
+  variables: TemplateVariable[]; // NEW: Variable metadata
 }
 
 export interface InsertPromptTemplate {
@@ -93,6 +117,8 @@ export interface InsertPromptTemplate {
   tags?: string[];
   isPublic?: boolean;
   usageCount?: number;
+  isOfficial?: boolean;           // NEW
+  variables?: TemplateVariable[]; // NEW
 }
 
 export interface PromptAsset {
@@ -215,6 +241,97 @@ export interface InsertProject {
   description?: string | null;
   color?: string | null;
   icon?: string | null;
+}
+
+// ============================================================================
+// Course Learning System Types
+// ============================================================================
+
+export type Difficulty = 'beginner' | 'intermediate' | 'advanced';
+export type LessonType = 'theory' | 'example' | 'exercise' | 'quiz';
+
+export interface Course {
+  id: string;
+  title: string;
+  description: string;
+  difficulty: Difficulty;
+  modules: Module[];
+  estimatedTime: number; // 분
+  prerequisites?: string[]; // 선수 코스 ID
+  icon: string; // emoji
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Module {
+  id: string;
+  title: string;
+  lessons: Lesson[];
+}
+
+export interface Lesson {
+  id: string;
+  title: string;
+  type: LessonType;
+  content: LessonContent;
+}
+
+export type LessonContent =
+  | TheoryContent
+  | ExampleContent
+  | ExerciseContent
+  | QuizContent;
+
+export interface TheoryContent {
+  type: 'theory';
+  markdown: string;
+}
+
+export interface ExampleContent {
+  type: 'example';
+  goodExample: string;
+  badExample: string;
+  explanation: string;
+}
+
+export interface ExerciseContent {
+  type: 'exercise';
+  task: string;
+  hints: string[];
+  solution: string;
+  checkpoints?: string[]; // 체크할 포인트들
+}
+
+export interface QuizContent {
+  type: 'quiz';
+  questions: QuizQuestion[];
+}
+
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctAnswer: number; // 0-based index
+  explanation: string;
+}
+
+export interface UserCourseProgress {
+  userId: string;
+  courseId: string;
+  completedLessons: string[]; // lesson IDs
+  quizScores: Record<string, number>; // lessonId -> score
+  completionRate: number; // 0-100
+  lastAccessedAt: Date;
+  currentModuleId?: string;
+  currentLessonId?: string;
+}
+
+export interface InsertUserCourseProgress {
+  userId: string;
+  courseId: string;
+  completedLessons?: string[];
+  quizScores?: Record<string, number>;
+  currentModuleId?: string;
+  currentLessonId?: string;
 }
 
 // ============================================================================
@@ -441,6 +558,12 @@ export async function deleteConversation(id: string): Promise<void> {
 // ============================================================================
 
 export async function createPromptTemplate(data: InsertPromptTemplate): Promise<string> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - skipping template creation');
+    const { nanoid } = await import('nanoid');
+    return nanoid();
+  }
+
   try {
     const now = new Date();
     const templateData: Omit<PromptTemplate, 'id'> = {
@@ -452,6 +575,8 @@ export async function createPromptTemplate(data: InsertPromptTemplate): Promise<
       tags: data.tags || [],
       isPublic: data.isPublic || false,
       usageCount: data.usageCount || 0,
+      isOfficial: data.isOfficial || false,
+      variables: data.variables || [],
       createdAt: now,
       updatedAt: now,
     };
@@ -487,6 +612,128 @@ export async function deletePromptTemplate(id: string): Promise<void> {
   } catch (error) {
     console.error('[Firestore] Failed to delete prompt template:', error);
     throw error;
+  }
+}
+
+export async function getPublicPromptTemplates(options?: {
+  category?: string;
+  tags?: string[];
+  limit?: number;
+}): Promise<PromptTemplate[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - returning empty templates');
+    return [];
+  }
+
+  try {
+    let query = db.collection('promptTemplates')
+      .where('isPublic', '==', true) as any;
+
+    // Filter by category if provided
+    if (options?.category) {
+      query = query.where('category', '==', options.category);
+    }
+
+    // Filter by tags if provided (Firestore array-contains can only check one tag)
+    if (options?.tags && options.tags.length > 0) {
+      query = query.where('tags', 'array-contains', options.tags[0]);
+    }
+
+    // Order by usage count (most popular first)
+    query = query.orderBy('usageCount', 'desc');
+
+    // Limit results
+    if (options?.limit) {
+      query = query.limit(options.limit);
+    }
+
+    const snapshot = await query.get();
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as PromptTemplate));
+  } catch (error) {
+    console.error('[Firestore] Failed to get public prompt templates:', error);
+    return [];
+  }
+}
+
+export async function getPromptTemplateById(id: string): Promise<PromptTemplate | null> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - returning null template');
+    return null;
+  }
+
+  try {
+    const doc = await db.collection('promptTemplates').doc(id).get();
+
+    if (!doc.exists) {
+      return null;
+    }
+
+    return { id: doc.id, ...doc.data() } as PromptTemplate;
+  } catch (error) {
+    console.error('[Firestore] Failed to get prompt template:', error);
+    return null;
+  }
+}
+
+export async function incrementTemplateUsage(id: string): Promise<void> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - skipping increment usage');
+    return;
+  }
+
+  try {
+    await db.collection('promptTemplates').doc(id).update({
+      usageCount: FieldValue.increment(1),
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to increment template usage:', error);
+    throw error;
+  }
+}
+
+export function fillTemplateVariables(
+  templateContent: string,
+  variableValues: Record<string, string>
+): string {
+  let filled = templateContent;
+  for (const [key, value] of Object.entries(variableValues)) {
+    filled = filled.replace(new RegExp(`{{${key}}}`, 'g'), value);
+  }
+  return filled;
+}
+
+export async function getTemplateCategories(): Promise<{ category: string; count: number }[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - returning empty categories');
+    return [];
+  }
+
+  try {
+    const snapshot = await db.collection('promptTemplates')
+      .where('isPublic', '==', true)
+      .get();
+
+    // Count templates by category
+    const categoryCounts: Record<string, number> = {};
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const category = data.category || 'other';
+      categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+    });
+
+    // Convert to array
+    return Object.entries(categoryCounts).map(([category, count]) => ({
+      category,
+      count,
+    }));
+  } catch (error) {
+    console.error('[Firestore] Failed to get template categories:', error);
+    return [];
   }
 }
 
@@ -972,6 +1219,653 @@ export async function updatePromptAssetSuccessStatus(id: string, status: number)
     });
   } catch (error) {
     console.error('[Firestore] Failed to update success status:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// Course Functions
+// ============================================================================
+
+export async function getAllCourses(): Promise<Course[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting courses from memory');
+    return Array.from(devMemoryStore.courses.values());
+  }
+
+  try {
+    const snapshot = await db.collection('courses').get();
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate() || new Date(),
+      updatedAt: doc.data().updatedAt?.toDate() || new Date(),
+    })) as Course[];
+  } catch (error) {
+    console.error('[Firestore] Failed to get courses:', error);
+    throw error;
+  }
+}
+
+export async function getCoursesByDifficulty(difficulty: Difficulty): Promise<Course[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - filtering courses from memory');
+    return Array.from(devMemoryStore.courses.values()).filter(
+      (course) => course.difficulty === difficulty
+    );
+  }
+
+  try {
+    const snapshot = await db
+      .collection('courses')
+      .where('difficulty', '==', difficulty)
+      .get();
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate() || new Date(),
+      updatedAt: doc.data().updatedAt?.toDate() || new Date(),
+    })) as Course[];
+  } catch (error) {
+    console.error('[Firestore] Failed to get courses by difficulty:', error);
+    throw error;
+  }
+}
+
+export async function getCourseById(courseId: string): Promise<Course | null> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting course from memory');
+    return devMemoryStore.courses.get(courseId) || null;
+  }
+
+  try {
+    const doc = await db.collection('courses').doc(courseId).get();
+    if (!doc.exists) {
+      return null;
+    }
+    return {
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data()?.createdAt?.toDate() || new Date(),
+      updatedAt: doc.data()?.updatedAt?.toDate() || new Date(),
+    } as Course;
+  } catch (error) {
+    console.error('[Firestore] Failed to get course by ID:', error);
+    throw error;
+  }
+}
+
+export async function createCourse(course: Omit<Course, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
+  const now = new Date();
+  const courseData: Omit<Course, 'id'> = {
+    ...course,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - creating course in memory');
+    const id = `course_${Date.now()}`;
+    devMemoryStore.courses.set(id, { id, ...courseData });
+    return id;
+  }
+
+  try {
+    const docRef = await db.collection('courses').add(courseData);
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create course:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// User Course Progress Functions
+// ============================================================================
+
+export async function getUserCourseProgress(
+  userId: string,
+  courseId: string
+): Promise<UserCourseProgress | null> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting progress from memory');
+    const key = `${userId}_${courseId}`;
+    return devMemoryStore.userCourseProgress.get(key) || null;
+  }
+
+  try {
+    const snapshot = await db
+      .collection('userCourseProgress')
+      .where('userId', '==', userId)
+      .where('courseId', '==', courseId)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return null;
+    }
+
+    const doc = snapshot.docs[0];
+    return {
+      ...doc.data(),
+      lastAccessedAt: doc.data().lastAccessedAt?.toDate() || new Date(),
+    } as UserCourseProgress;
+  } catch (error) {
+    console.error('[Firestore] Failed to get user course progress:', error);
+    throw error;
+  }
+}
+
+export async function getUserAllCourseProgress(userId: string): Promise<UserCourseProgress[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting all progress from memory');
+    return Array.from(devMemoryStore.userCourseProgress.values()).filter(
+      (progress) => progress.userId === userId
+    );
+  }
+
+  try {
+    const snapshot = await db
+      .collection('userCourseProgress')
+      .where('userId', '==', userId)
+      .get();
+
+    return snapshot.docs.map((doc) => ({
+      ...doc.data(),
+      lastAccessedAt: doc.data().lastAccessedAt?.toDate() || new Date(),
+    })) as UserCourseProgress[];
+  } catch (error) {
+    console.error('[Firestore] Failed to get user all course progress:', error);
+    throw error;
+  }
+}
+
+export async function upsertUserCourseProgress(
+  progressData: InsertUserCourseProgress
+): Promise<void> {
+  const now = new Date();
+
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - upserting progress in memory');
+    const key = `${progressData.userId}_${progressData.courseId}`;
+    const existing = devMemoryStore.userCourseProgress.get(key);
+
+    const updated: UserCourseProgress = {
+      userId: progressData.userId,
+      courseId: progressData.courseId,
+      completedLessons: progressData.completedLessons || existing?.completedLessons || [],
+      quizScores: progressData.quizScores || existing?.quizScores || {},
+      completionRate: 0, // Will be calculated
+      lastAccessedAt: now,
+      currentModuleId: progressData.currentModuleId || existing?.currentModuleId,
+      currentLessonId: progressData.currentLessonId || existing?.currentLessonId,
+    };
+
+    devMemoryStore.userCourseProgress.set(key, updated);
+    return;
+  }
+
+  try {
+    const snapshot = await db
+      .collection('userCourseProgress')
+      .where('userId', '==', progressData.userId)
+      .where('courseId', '==', progressData.courseId)
+      .limit(1)
+      .get();
+
+    const data = {
+      ...progressData,
+      lastAccessedAt: now,
+    };
+
+    if (snapshot.empty) {
+      // Create new
+      await db.collection('userCourseProgress').add({
+        ...data,
+        completedLessons: data.completedLessons || [],
+        quizScores: data.quizScores || {},
+        completionRate: 0,
+      });
+    } else {
+      // Update existing
+      await snapshot.docs[0].ref.update(data);
+    }
+  } catch (error) {
+    console.error('[Firestore] Failed to upsert user course progress:', error);
+    throw error;
+  }
+}
+
+export async function completeLesson(
+  userId: string,
+  courseId: string,
+  lessonId: string
+): Promise<void> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - completing lesson in memory');
+    const key = `${userId}_${courseId}`;
+    const progress = devMemoryStore.userCourseProgress.get(key);
+
+    if (progress) {
+      if (!progress.completedLessons.includes(lessonId)) {
+        progress.completedLessons.push(lessonId);
+      }
+      progress.lastAccessedAt = new Date();
+      devMemoryStore.userCourseProgress.set(key, progress);
+    }
+    return;
+  }
+
+  try {
+    const snapshot = await db
+      .collection('userCourseProgress')
+      .where('userId', '==', userId)
+      .where('courseId', '==', courseId)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      // Create new progress
+      await db.collection('userCourseProgress').add({
+        userId,
+        courseId,
+        completedLessons: [lessonId],
+        quizScores: {},
+        completionRate: 0,
+        lastAccessedAt: new Date(),
+      });
+    } else {
+      // Update existing
+      const doc = snapshot.docs[0];
+      const currentLessons = doc.data().completedLessons || [];
+      if (!currentLessons.includes(lessonId)) {
+        await doc.ref.update({
+          completedLessons: FieldValue.arrayUnion(lessonId),
+          lastAccessedAt: new Date(),
+        });
+      }
+    }
+  } catch (error) {
+    console.error('[Firestore] Failed to complete lesson:', error);
+    throw error;
+  }
+}
+
+export async function updateQuizScore(
+  userId: string,
+  courseId: string,
+  lessonId: string,
+  score: number
+): Promise<void> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - updating quiz score in memory');
+    const key = `${userId}_${courseId}`;
+    const progress = devMemoryStore.userCourseProgress.get(key);
+
+    if (progress) {
+      progress.quizScores[lessonId] = score;
+      progress.lastAccessedAt = new Date();
+      devMemoryStore.userCourseProgress.set(key, progress);
+    }
+    return;
+  }
+
+  try {
+    const snapshot = await db
+      .collection('userCourseProgress')
+      .where('userId', '==', userId)
+      .where('courseId', '==', courseId)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      // Create new progress
+      await db.collection('userCourseProgress').add({
+        userId,
+        courseId,
+        completedLessons: [],
+        quizScores: { [lessonId]: score },
+        completionRate: 0,
+        lastAccessedAt: new Date(),
+      });
+    } else {
+      // Update existing
+      const doc = snapshot.docs[0];
+      await doc.ref.update({
+        [`quizScores.${lessonId}`]: score,
+        lastAccessedAt: new Date(),
+      });
+    }
+  } catch (error) {
+    console.error('[Firestore] Failed to update quiz score:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// Chain Functions
+// ============================================================================
+
+export interface PromptChain {
+  id: string;
+  userId: string;
+  name: string;
+  description: string;
+  category: string;
+  steps: any[];
+  totalEstimatedCost: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StepResult {
+  stepId: string;
+  output: string;
+  tokensUsed: number;
+  cost: number;
+  duration: number;
+  success: boolean;
+  error?: string;
+  executedAt: Date;
+}
+
+export interface ChainExecution {
+  id: string;
+  chainId: string;
+  userId: string;
+  status: string;
+  currentStepIndex: number;
+  stepResults: StepResult[];
+  initialInput?: string;
+  startedAt: Date;
+  completedAt?: Date;
+  totalCost: number;
+  totalDuration: number;
+  error?: string;
+}
+
+export interface ChainStep {
+  id: string;
+  order: number;
+  name: string;
+  promptTemplate: string;
+  modelId: string;
+  usePreviousOutput: boolean;
+  estimatedCost: number;
+  description?: string;
+}
+
+export interface ChainTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  steps: Omit<ChainStep, 'id'>[];
+  isOfficial: boolean;
+  usageCount: number;
+  tags: string[];
+  estimatedTime: number;
+  createdAt: Date;
+}
+
+export async function createChain(chainData: Omit<PromptChain, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
+  const now = new Date();
+  const chain: Omit<PromptChain, 'id'> = {
+    ...chainData,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - creating chain in memory');
+    const id = `chain_${Date.now()}`;
+    devMemoryStore.chains.set(id, { id, ...chain });
+    return id;
+  }
+
+  try {
+    const docRef = await db.collection('chains').add(chain);
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create chain:', error);
+    throw error;
+  }
+}
+
+export async function getChainsByUserId(userId: string): Promise<PromptChain[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting chains from memory');
+    return Array.from(devMemoryStore.chains.values()).filter(
+      (chain: any) => chain.userId === userId
+    );
+  }
+
+  try {
+    const snapshot = await db
+      .collection('chains')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate() || new Date(),
+      updatedAt: doc.data().updatedAt?.toDate() || new Date(),
+    })) as PromptChain[];
+  } catch (error) {
+    console.error('[Firestore] Failed to get chains:', error);
+    throw error;
+  }
+}
+
+export async function getChainById(chainId: string): Promise<PromptChain | null> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting chain from memory');
+    return devMemoryStore.chains.get(chainId) || null;
+  }
+
+  try {
+    const doc = await db.collection('chains').doc(chainId).get();
+    if (!doc.exists) {
+      return null;
+    }
+
+    return {
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data()?.createdAt?.toDate() || new Date(),
+      updatedAt: doc.data()?.updatedAt?.toDate() || new Date(),
+    } as PromptChain;
+  } catch (error) {
+    console.error('[Firestore] Failed to get chain:', error);
+    throw error;
+  }
+}
+
+export async function updateChain(
+  chainId: string,
+  updates: Partial<Omit<PromptChain, 'id' | 'userId' | 'createdAt'>>
+): Promise<void> {
+  const now = new Date();
+
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - updating chain in memory');
+    const chain = devMemoryStore.chains.get(chainId);
+    if (chain) {
+      devMemoryStore.chains.set(chainId, {
+        ...chain,
+        ...updates,
+        updatedAt: now,
+      });
+    }
+    return;
+  }
+
+  try {
+    await db.collection('chains').doc(chainId).update({
+      ...updates,
+      updatedAt: now,
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to update chain:', error);
+    throw error;
+  }
+}
+
+export async function deleteChain(chainId: string): Promise<void> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - deleting chain from memory');
+    devMemoryStore.chains.delete(chainId);
+    return;
+  }
+
+  try {
+    await db.collection('chains').doc(chainId).delete();
+  } catch (error) {
+    console.error('[Firestore] Failed to delete chain:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// Chain Execution Functions
+// ============================================================================
+
+export async function createChainExecution(
+  executionData: Omit<ChainExecution, 'id'>
+): Promise<string> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - creating execution in memory');
+    const id = `exec_${Date.now()}`;
+    devMemoryStore.chainExecutions.set(id, { id, ...executionData });
+    return id;
+  }
+
+  try {
+    const docRef = await db.collection('chainExecutions').add(executionData);
+    return docRef.id;
+  } catch (error) {
+    console.error('[Firestore] Failed to create execution:', error);
+    throw error;
+  }
+}
+
+export async function getChainExecution(executionId: string): Promise<ChainExecution | null> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting execution from memory');
+    return devMemoryStore.chainExecutions.get(executionId) || null;
+  }
+
+  try {
+    const doc = await db.collection('chainExecutions').doc(executionId).get();
+    if (!doc.exists) {
+      return null;
+    }
+
+    return {
+      id: doc.id,
+      ...doc.data(),
+      startedAt: doc.data()?.startedAt?.toDate() || new Date(),
+      completedAt: doc.data()?.completedAt?.toDate(),
+    } as ChainExecution;
+  } catch (error) {
+    console.error('[Firestore] Failed to get execution:', error);
+    throw error;
+  }
+}
+
+export async function updateChainExecution(
+  executionId: string,
+  updates: Partial<Omit<ChainExecution, 'id' | 'chainId' | 'userId' | 'startedAt'>>
+): Promise<void> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - updating execution in memory');
+    const execution = devMemoryStore.chainExecutions.get(executionId);
+    if (execution) {
+      devMemoryStore.chainExecutions.set(executionId, {
+        ...execution,
+        ...updates,
+      });
+    }
+    return;
+  }
+
+  try {
+    await db.collection('chainExecutions').doc(executionId).update(updates);
+  } catch (error) {
+    console.error('[Firestore] Failed to update execution:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// Chain Template Functions
+// ============================================================================
+
+export async function getAllChainTemplates(): Promise<ChainTemplate[]> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting templates from memory');
+    return Array.from(devMemoryStore.chainTemplates.values());
+  }
+
+  try {
+    const snapshot = await db
+      .collection('chainTemplates')
+      .orderBy('usageCount', 'desc')
+      .get();
+
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate() || new Date(),
+    })) as ChainTemplate[];
+  } catch (error) {
+    console.error('[Firestore] Failed to get templates:', error);
+    throw error;
+  }
+}
+
+export async function getChainTemplateById(templateId: string): Promise<ChainTemplate | null> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - getting template from memory');
+    return devMemoryStore.chainTemplates.get(templateId) || null;
+  }
+
+  try {
+    const doc = await db.collection('chainTemplates').doc(templateId).get();
+    if (!doc.exists) {
+      return null;
+    }
+
+    return {
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data()?.createdAt?.toDate() || new Date(),
+    } as ChainTemplate;
+  } catch (error) {
+    console.error('[Firestore] Failed to get template:', error);
+    throw error;
+  }
+}
+
+export async function incrementChainTemplateUsage(templateId: string): Promise<void> {
+  if (isDevModeWithoutFirebase || !db) {
+    console.log('[Firestore] Dev mode - incrementing chain template usage in memory');
+    const template = devMemoryStore.chainTemplates.get(templateId);
+    if (template) {
+      template.usageCount = (template.usageCount || 0) + 1;
+      devMemoryStore.chainTemplates.set(templateId, template);
+    }
+    return;
+  }
+
+  try {
+    await db.collection('chainTemplates').doc(templateId).update({
+      usageCount: FieldValue.increment(1),
+    });
+  } catch (error) {
+    console.error('[Firestore] Failed to increment usage:', error);
     throw error;
   }
 }

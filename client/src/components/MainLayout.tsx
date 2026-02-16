@@ -74,11 +74,8 @@ export function MainLayout({ children }: MainLayoutProps) {
         <Footer />
       </main>
 
-      {/* Right Panel */}
-      {isDesktop && <RightPanel />}
-
-      {/* Right Panel Mobile/Tablet Overlay */}
-      {!isDesktop && <RightPanel />}
+      {/* Right Panel - Desktop uses fixed position, Mobile/Tablet uses overlay */}
+      <RightPanel />
     </div>
   );
 }

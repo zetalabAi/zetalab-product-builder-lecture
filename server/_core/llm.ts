@@ -247,9 +247,9 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
 
   const ai = getGenAI();
 
-  // Primary model: Gemini 2.5 Flash Lite
-  const primaryModel = "gemini-2.5-flash-lite";
-  const fallbackModel = "gemini-1.5-flash";
+  // Use most stable model name
+  const primaryModel = "gemini-pro";
+  const fallbackModel = "gemini-pro";
 
   // Convert messages
   const { geminiMessages, systemInstruction } = convertToGeminiMessages(messages);

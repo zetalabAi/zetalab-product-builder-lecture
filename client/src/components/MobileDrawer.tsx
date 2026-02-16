@@ -37,6 +37,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./ui/alert-dialog";
+import type { Conversation } from "@/types/conversation";
 
 interface MobileDrawerProps {
   isOpen: boolean;
@@ -227,7 +228,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
 
   // 이름 변경하기
   const handleRename = () => {
-    const chat = filteredChats.find((c: any) => c.id === selectedChatId);
+    const chat = filteredChats.find((c: Conversation) => c.id === selectedChatId);
     if (chat) {
       setNewChatName(chat.originalQuestion || "");
       setRenameDialogOpen(true);
@@ -238,7 +239,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
   // 고정하기
   const handlePin = () => {
     if (selectedChatId) {
-      const chat = filteredChats.find((c: any) => c.id === selectedChatId) as any;
+      const chat = filteredChats.find((c: Conversation) => c.id === selectedChatId);
       pinMutation.mutate({ 
         promptId: selectedChatId,
         isPinned: !(chat?.isPinned || false)
@@ -270,7 +271,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
     }
   };
 
-  const selectedChat = filteredChats.find((c: any) => c.id === selectedChatId) as any;
+  const selectedChat = filteredChats.find((c: Conversation) => c.id === selectedChatId);
 
   return (
     <>
@@ -403,7 +404,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
                     {searchQuery ? "검색 결과가 없습니다" : "대화 내역이 없습니다"}
                   </div>
                 )}
-                {!historyLoading && filteredChats.map((chat: any) => (
+                {!historyLoading && filteredChats.map((chat: Conversation) => (
                   <div
                     key={chat.id}
                     className={`w-full rounded-lg transition-all ${

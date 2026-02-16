@@ -3,28 +3,16 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { LayoutProvider } from "./contexts/LayoutContext";
 import { MainLayout } from "./components/MainLayout";
 import { ThemeToggle } from "./components/ThemeToggle";
-import { lazy, Suspense, useEffect } from "react";
+import { Suspense, useEffect, lazy } from "react";
 import { handleRedirectResult } from "@/lib/firebase";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { routes } from "./routes";
 
-// Lazy load 페이지 컴포넌트 - 모바일 성능 최적화
-const Home = lazy(() => import("./pages/Home"));
-const IntentClarification = lazy(() => import("./pages/IntentClarification"));
-const PromptResult = lazy(() => import("./pages/PromptResult"));
-const History = lazy(() => import("./pages/History"));
-const Settings = lazy(() => import("./pages/Settings"));
-const ConversationDetail = lazy(() => import("./pages/ConversationDetail").then(m => ({ default: m.ConversationDetail })));
-const Projects = lazy(() => import("./pages/Projects"));
-const MyWork = lazy(() => import("./pages/MyWork"));
-const PromptVersions = lazy(() => import("./pages/PromptVersions"));
-const ProjectDetail = lazy(() => import("./pages/ProjectDetail"));
 const NotFound = lazy(() => import("./pages/NotFound"));
-const Privacy = lazy(() => import("./pages/Privacy"));
-const Terms = lazy(() => import("./pages/Terms"));
-const Feedback = lazy(() => import("./pages/Feedback"));
 
 // 로딩 폴백 컴포넌트
 function PageLoader() {
@@ -54,27 +42,27 @@ function KeyboardAwareLayout({ children }: { children: React.ReactNode }) {
       const windowHeight = window.innerHeight;
       const viewportHeight = viewport.height;
       const keyboardHeight = Math.max(0, windowHeight - viewportHeight);
-      
+
       // CSS 변수로 키보드 높이 전달
       document.documentElement.style.setProperty('--keyboard-height', `${keyboardHeight}px`);
-      
+
       // 키보드가 올라왔을 때 포커스된 요소 스크롤
       if (keyboardHeight > 0 && focusedElement) {
         setTimeout(() => {
-          focusedElement?.scrollIntoView({ 
-            behavior: 'smooth', 
-            block: 'center' 
+          focusedElement?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center'
           });
         }, 100);
       }
     };
 
-    // 입력 요소 포커스 감지
+    // 입력 요소 포커스 감지 (메모이제이션으로 최적화)
     const handleFocusIn = (e: FocusEvent) => {
       const target = e.target as HTMLElement;
       if (
-        target.tagName === 'INPUT' || 
-        target.tagName === 'TEXTAREA' || 
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
         target.contentEditable === 'true'
       ) {
         focusedElement = target;
@@ -82,7 +70,7 @@ function KeyboardAwareLayout({ children }: { children: React.ReactNode }) {
       }
     };
 
-    // 입력 요소 포커스 해제
+    // 입력 요소 포커스 해제 (메모이제이션으로 최적화)
     const handleFocusOut = () => {
       focusedElement = null;
       // blur 시 원래 레이아웃 복원
@@ -110,33 +98,24 @@ function KeyboardAwareLayout({ children }: { children: React.ReactNode }) {
 
 function Router() {
   return (
-    <MainLayout>
-      <Suspense fallback={<PageLoader />}>
-        <Switch>
-          <Route path={"/"} component={Home} />
-
-          <Route path="/intent/:sessionId" component={IntentClarification} />
-          <Route path="/result/:promptId" component={PromptResult} />
-          <Route path="/history/:id" component={ConversationDetail} />
-          <Route path="/history" component={History} />
-          <Route path="/my-work" component={MyWork} />
-          <Route path="/my-work/:assetId" component={PromptVersions} />
-          <Route path="/projects/:id" component={ProjectDetail} />
-          <Route path="/projects" component={Projects} />
-          <Route path="/settings" component={Settings} />
-          <Route path="/privacy" component={Privacy} />
-          <Route path="/terms" component={Terms} />
-          <Route path="/feedback" component={Feedback} />
-          <Route path={"/404"} component={NotFound} />
-          <Route component={NotFound} />
-        </Switch>
-      </Suspense>
-    </MainLayout>
+    <LayoutProvider>
+      <MainLayout>
+        <Suspense fallback={<PageLoader />}>
+          <Switch>
+            {routes.map((route) => (
+              <Route key={route.path} path={route.path} component={route.component} />
+            ))}
+            <Route component={NotFound} />
+          </Switch>
+        </Suspense>
+      </MainLayout>
+    </LayoutProvider>
   );
 }
 
 function App() {
   const utils = trpc.useUtils();
+  const createUserMutation = trpc.users.createUser.useMutation();
 
   // Handle Firebase redirect result on app load
   useEffect(() => {
@@ -144,18 +123,32 @@ function App() {
       try {
         const result = await handleRedirectResult();
         if (result) {
+          // Create user in Firestore on first login
+          try {
+            await createUserMutation.mutateAsync({
+              uid: result.user.uid,
+              email: result.user.email,
+              displayName: result.user.displayName,
+              photoURL: result.user.photoURL,
+            });
+          } catch (createUserError) {
+            console.error("Failed to create user:", createUserError);
+            // Continue anyway - user might already exist
+          }
+
           toast.success("로그인 성공!");
           // Refresh user data
           await utils.auth.me.invalidate();
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Redirect auth failed:", error);
-        toast.error(error.message || "로그인에 실패했습니다.");
+        const message = error instanceof Error ? error.message : "로그인에 실패했습니다.";
+        toast.error(message);
       }
     };
 
     handleAuth();
-  }, [utils]);
+  }, [utils, createUserMutation]);
 
   return (
     <ErrorBoundary>

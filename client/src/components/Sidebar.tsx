@@ -27,6 +27,11 @@ import {
   Pin,
   PinOff,
   Edit2,
+  FlaskConical,
+  BookTemplate,
+  TrendingUp,
+  GraduationCap,
+  Workflow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,6 +66,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import type { Conversation, MenuItem } from "@/types/conversation";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -80,7 +86,7 @@ interface SidebarProps {
 // AuthTrace 진단 로깅 (환경 변수로 제어)
 const AUTH_TRACE_ENABLED = import.meta.env.VITE_AUTH_TRACE === "true";
 
-function authTrace(label: string, data: any) {
+function authTrace(label: string, data: unknown) {
   if (AUTH_TRACE_ENABLED) {
     console.log(`[AuthTrace] ${label}:`, data);
   }
@@ -151,7 +157,7 @@ export function Sidebar({ isOpen, onToggle }: SidebarProps) {
     if (!searchQuery.trim()) return historyData;
     
     const query = searchQuery.toLowerCase();
-    return historyData.filter((chat: any) => 
+    return historyData.filter((chat: Conversation) => 
       chat.originalQuestion?.toLowerCase().includes(query) ||
       chat.generatedPrompt?.toLowerCase().includes(query)
     );
@@ -166,8 +172,13 @@ export function Sidebar({ isOpen, onToggle }: SidebarProps) {
   const menuItems = [
     { icon: MessageSquare, label: "채팅", path: "/history" },
     { icon: Box, label: "아티팩트", path: "#", disabled: true },
-    { icon: FileText, label: "내 작업", path: "/my-work" },
+    { icon: FileText, label: "내 프롬프트", path: "/my-work" },
     { icon: FolderOpen, label: "프로젝트", path: "#", action: "projects" },
+    { icon: BookTemplate, label: "템플릿", path: "/templates" },
+    { icon: FlaskConical, label: "AI Playground", path: "/playground" },
+    { icon: Workflow, label: "프롬프트 체인", path: "/chains" },
+    { icon: GraduationCap, label: "학습 코스", path: "/courses" },
+    { icon: TrendingUp, label: "나의 성장", path: "/dashboard" },
   ];
 
   const builderBoxItems = [
@@ -208,7 +219,7 @@ export function Sidebar({ isOpen, onToggle }: SidebarProps) {
     setDeleteDialogOpen(true);
   };
 
-  const handleRenameClick = (chat: any) => {
+  const handleRenameClick = (chat: Conversation) => {
     setRenamingChatId(chat.id);
     setNewChatTitle(chat.originalQuestion || "");
     setRenameDialogOpen(true);
@@ -219,7 +230,7 @@ export function Sidebar({ isOpen, onToggle }: SidebarProps) {
     renameMutation.mutate({ promptId: Number(renamingChatId), newName: newChatTitle.trim() });
   };
 
-  const handlePinToggle = (chat: any) => {
+  const handlePinToggle = (chat: Conversation) => {
     pinMutation.mutate({ promptId: Number(chat.id), isPinned: !(chat as any).isPinned });
   };
 
@@ -234,7 +245,7 @@ export function Sidebar({ isOpen, onToggle }: SidebarProps) {
       {/* Sidebar - Partial Collapse */}
       <aside
         className={cn(
-          "fixed left-0 top-0 h-full bg-background border-r border-border transition-all duration-300 z-40 flex flex-col",
+          "fixed left-0 top-0 h-full bg-background border-r border-border transition-all duration-200 z-40 flex flex-col",
           isOpen ? "w-64" : "w-16"
         )}
       >
@@ -290,7 +301,7 @@ export function Sidebar({ isOpen, onToggle }: SidebarProps) {
 
             {/* Menu Items */}
             <div className="px-2 space-y-1">
-              {menuItems.map((item: any) => (
+              {menuItems.map((item: MenuItem) => (
                 <Button
                   key={item.label}
                   variant="ghost"
@@ -360,7 +371,7 @@ export function Sidebar({ isOpen, onToggle }: SidebarProps) {
                       {searchQuery ? "검색 결과가 없습니다" : "대화 내역이 없습니다"}
                     </div>
                   )}
-                  {!historyLoading && filteredChats.map((chat: any) => (
+                  {!historyLoading && filteredChats.map((chat: Conversation) => (
                     <ContextMenu key={chat.id}>
                       <ContextMenuTrigger asChild>
                         <div

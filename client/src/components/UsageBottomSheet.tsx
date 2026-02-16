@@ -46,7 +46,7 @@ export function UsageBottomSheet({ isOpen, onClose }: UsageBottomSheetProps) {
 
       {/* Bottom Sheet */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-50 bg-background rounded-t-3xl shadow-2xl animate-in slide-in-from-bottom duration-300 md:hidden"
+        className="fixed bottom-0 left-0 right-0 z-50 bg-background rounded-t-3xl shadow-2xl animate-in slide-in-from-bottom duration-200 md:hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 상단 핸들 바 */}

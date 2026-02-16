@@ -1,54 +1,212 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function to check if user is authenticated
+    // ============================================
+    // Helper Functions
+    // ============================================
+
+    // Check if user is authenticated
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Helper function to check if user owns the document
+    // Check if user owns the document
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Users collection
-    match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if isOwner(userId);
+    // Check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
-    // Projects collection
+    // Validate required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ============================================
+    // Users Collection
+    // ============================================
+    match /users/{userId} {
+      // Anyone authenticated can read any user profile (for display purposes)
+      allow read: if isAuthenticated();
+
+      // Users can only create/update their own profile
+      allow create: if isOwner(userId) && hasRequiredFields(['uid', 'email', 'createdAt']);
+      allow update: if isOwner(userId);
+
+      // Only the user themselves or admins can delete
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // ============================================
+    // Projects Collection
+    // ============================================
     match /projects/{projectId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'name', 'createdAt']);
       allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
-    // Conversations collection
+    // ============================================
+    // Conversations Collection (Prompt History)
+    // ============================================
     match /conversations/{conversationId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'createdAt']);
       allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
-    // Messages collection (subcollection of conversations)
+    // Messages subcollection (if used)
     match /conversations/{conversationId}/messages/{messageId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
       allow update, delete: if isAuthenticated();
     }
 
-    // Prompts collection
+    // ============================================
+    // Prompts Collection
+    // ============================================
     match /prompts/{promptId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'originalQuestion', 'generatedPrompt', 'createdAt']);
       allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
-    // Intent templates collection (read-only for users)
+    // ============================================
+    // Prompt Assets Collection (My Work)
+    // ============================================
+    match /promptAssets/{assetId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'name', 'originalQuestion', 'createdAt']);
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // Prompt Versions Collection
+    // ============================================
+    match /promptVersions/{versionId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'assetId', 'versionNumber', 'generatedPrompt', 'createdAt']);
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // Chains Collection
+    // ============================================
+    match /chains/{chainId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'name', 'steps', 'createdAt']);
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // Chain Executions Collection
+    // ============================================
+    match /chainExecutions/{executionId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'chainId', 'status', 'createdAt']);
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // Chain Templates Collection
+    // ============================================
+    match /chainTemplates/{templateId} {
+      // Public templates can be read by anyone authenticated
+      allow read: if isAuthenticated() &&
+                     (resource.data.isPublic == true || resource.data.userId == request.auth.uid);
+
+      // Only authenticated users can create templates
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'name', 'category', 'steps', 'createdAt']);
+
+      // Only owner can update/delete their templates
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // Progress Collection (Learning System)
+    // ============================================
+    match /progress/{progressId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'type', 'createdAt']);
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // Course Progress Collection
+    // ============================================
+    match /courseProgress/{progressId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'courseId', 'createdAt']);
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // Intent Templates Collection (Admin-only write)
+    // ============================================
     match /intentTemplates/{templateId} {
+      // Anyone authenticated can read templates
       allow read: if isAuthenticated();
-      allow write: if false; // Only admins can write, managed via admin SDK
+
+      // Only admins can write (managed via Admin SDK)
+      allow write: if isAdmin();
+    }
+
+    // ============================================
+    // Courses Collection (Read-only for users)
+    // ============================================
+    match /courses/{courseId} {
+      // Anyone authenticated can read courses
+      allow read: if isAuthenticated();
+
+      // Only admins can write (managed via Admin SDK)
+      allow write: if isAdmin();
+    }
+
+    // ============================================
+    // Templates Collection (Prompt Templates Library)
+    // ============================================
+    match /templates/{templateId} {
+      // Public templates can be read by anyone authenticated
+      allow read: if isAuthenticated() &&
+                     (resource.data.isPublic == true || resource.data.userId == request.auth.uid);
+
+      // Only authenticated users can create templates
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       hasRequiredFields(['userId', 'title', 'content', 'createdAt']);
+
+      // Only owner can update/delete their templates
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // Default Deny All Other Collections
+    // ============================================
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

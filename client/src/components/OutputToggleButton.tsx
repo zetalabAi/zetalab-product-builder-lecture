@@ -1,8 +1,9 @@
+import { memo } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLayout } from "@/contexts/LayoutContext";
 
-export function OutputToggleButton() {
+export const OutputToggleButton = memo(function OutputToggleButton() {
   const { rightPanelOpen, rightPanelContent, toggleRightPanel } = useLayout();
 
   // Only show if there's content to display
@@ -26,4 +27,4 @@ export function OutputToggleButton() {
       )}
     </Button>
   );
-}
+});

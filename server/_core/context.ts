@@ -58,15 +58,28 @@ export async function createContext(
   }
 
   try {
+    // Debug: Check what we have
+    console.log('[Context Debug] Headers:', {
+      authorization: opts.req.headers.authorization?.substring(0, 50) + '...',
+      cookie: opts.req.headers.cookie?.substring(0, 50) + '...',
+    });
+
     // Verify Firebase session cookie
     const decodedClaims = await verifyFirebaseSession(opts.req);
+
+    console.log('[Context Debug] Decoded claims:', decodedClaims ? {
+      uid: decodedClaims.uid,
+      email: decodedClaims.email
+    } : null);
 
     if (decodedClaims) {
       // Get user from Firestore
       user = await getUserByUid(decodedClaims.uid);
+      console.log('[Context Debug] User from DB:', user ? { id: user.id, uid: user.uid } : null);
     }
   } catch (error) {
     // Authentication is optional for public procedures.
+    console.error('[Context Debug] Auth error:', error);
     authTrace("auth error", { error: error instanceof Error ? error.message : String(error) });
     user = null;
   }

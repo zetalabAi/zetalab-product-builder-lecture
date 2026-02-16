@@ -7,10 +7,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Copy, Edit, Check, Sparkles, Home, Save, X } from "lucide-react";
+import { Copy, Edit, Check, Sparkles, Home, Save, X, RefreshCw, History } from "lucide-react";
 import { LoginModal } from "@/components/LoginModal";
+import { QualityScoreCard } from "@/components/quality/QualityScoreCard";
+import { PromptDisplay } from "@/components/prompt/PromptDisplay";
+import { VersionTimeline, VersionComparison } from "@/components/versions";
+import { PromptVersion, VersionComparison as VersionComparisonType } from "@/types/versions";
+import { detectChanges } from "@/utils/diff";
 
 export default function PromptResult() {
   const { isAuthenticated, loading } = useAuth();
@@ -27,6 +33,10 @@ export default function PromptResult() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showSaveSuccessModal, setShowSaveSuccessModal] = useState(false);
   const [assetName, setAssetName] = useState("");
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [selectedVersionForCompare, setSelectedVersionForCompare] = useState<PromptVersion | null>(null);
+  const [comparisonView, setComparisonView] = useState<VersionComparisonType | null>(null);
+  const [hasTriggeredQualityAnalysis, setHasTriggeredQualityAnalysis] = useState(false);
 
   const { data: prompt, isLoading } = trpc.zetaAI.getPromptById.useQuery(
     { promptId },
@@ -54,51 +64,116 @@ export default function PromptResult() {
     }
   });
 
+  // 🆕 품질 분석 mutation
+  const analyzeQualityMutation = trpc.quality.analyzePromptQuality.useMutation({
+    onSuccess: (data) => {
+      if (data.cached) {
+        toast.info("캐시된 품질 분석 결과입니다");
+      } else {
+        toast.success("품질 분석이 완료되었습니다");
+      }
+    },
+    onError: (error) => {
+      toast.error("품질 분석 실패: " + error.message);
+    }
+  });
+
+  // 🆕 품질 점수 조회 query
+  const { data: qualityData } = trpc.quality.getPromptQuality.useQuery(
+    { promptId },
+    {
+      enabled: isAuthenticated && !!promptId,
+      staleTime: Infinity, // 캐시 무효화 안 함 (수동 재분석만)
+    }
+  );
+
+  // 🆕 버전 히스토리 조회 query
+  const { data: versionData, refetch: refetchVersions } = trpc.versions.getVersionHistory.useQuery(
+    { promptId, limit: 10, offset: 0 },
+    {
+      enabled: isAuthenticated && !!promptId && showVersionHistory,
+    }
+  );
+
+  // 🆕 버전 생성 mutation
+  const createVersionMutation = trpc.versions.createVersion.useMutation({
+    onSuccess: () => {
+      toast.success("새 버전이 생성되었습니다");
+      refetchVersions();
+    },
+    onError: (error) => {
+      toast.error("버전 생성 실패: " + error.message);
+    }
+  });
+
+  // 🆕 버전 복원 mutation
+  const revertVersionMutation = trpc.versions.revertToVersion.useMutation({
+    onSuccess: (data) => {
+      toast.success(`v${data.version}으로 복원되었습니다`);
+      refetchVersions();
+      setComparisonView(null);
+      // 페이지 리로드하여 복원된 프롬프트 표시
+      window.location.reload();
+    },
+    onError: (error) => {
+      toast.error("버전 복원 실패: " + error.message);
+    }
+  });
+
+  // 🆕 버전 비교 query
+  const { data: compareData } = trpc.versions.compareVersions.useQuery(
+    {
+      promptId,
+      versionId1: selectedVersionForCompare?.id || "",
+      versionId2: versionData?.versions[0]?.id || "",
+    },
+    {
+      enabled: !!selectedVersionForCompare && !!versionData?.versions[0],
+    }
+  );
+
+  // 비교 데이터가 업데이트되면 comparisonView 설정
+  useEffect(() => {
+    if (compareData) {
+      setComparisonView(compareData);
+    }
+  }, [compareData]);
+
   useEffect(() => {
     if (!isAuthenticated && !loading) {
       setLoginModalOpen(true);
     }
   }, [isAuthenticated, loading, navigate]);
 
+  // 🆕 페이지 로드 시 품질 분석 자동 트리거 (한 번만 실행)
+  useEffect(() => {
+    if (!hasTriggeredQualityAnalysis && promptId) {
+      analyzeQualityMutation.mutate({ promptId });
+      setHasTriggeredQualityAnalysis(true);
+    }
+  }, [promptId, hasTriggeredQualityAnalysis]); // 의존성 최소화로 무한 루프 방지
+
+  // 프롬프트 초기화 (한 번만 실행)
   useEffect(() => {
     if (prompt) {
       setEditedPrompt(prompt.editedPrompt || prompt.generatedPrompt);
-      // 저장 모달 열 때 기본 이름 설정
       setAssetName(prompt.originalQuestion.substring(0, 50) || "프롬프트");
+    }
+  }, [prompt?.id]); // prompt.id만 체크하여 중복 실행 방지
 
-      // Set right panel content with the final prompt
+  // Right Panel 업데이트 (qualityData 변경 시만)
+  useEffect(() => {
+    if (prompt) {
       const displayPrompt = prompt.editedPrompt || prompt.generatedPrompt;
       setRightPanelContent(
-        <div className="p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">최종 프롬프트</h3>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleCopy}
-              className="flex items-center gap-1.5"
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3.5 h-3.5" />
-                  <span className="text-xs">복사됨</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span className="text-xs">복사</span>
-                </>
-              )}
-            </Button>
-          </div>
-          <div className="rounded-lg bg-secondary/30 p-4 border border-border/40">
-            <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
-              {displayPrompt}
-            </pre>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            이 프롬프트를 복사하여 AI 서비스에서 바로 사용하세요.
-          </p>
+        <div className="p-6">
+          <PromptDisplay
+            promptText={displayPrompt}
+            qualityScore={qualityData?.overall}
+            createdAt={prompt.createdAt}
+            isEdited={!!prompt.editedPrompt}
+            onEdit={() => setIsEditing(true)}
+          />
         </div>
       );
       setRightPanelOpen(true);
@@ -109,7 +184,7 @@ export default function PromptResult() {
       setRightPanelContent(null);
       setRightPanelOpen(false);
     };
-  }, [prompt, copied, setRightPanelContent, setRightPanelOpen]);
+  }, [prompt?.id, qualityData?.overall, qualityData?.clarity, setRightPanelContent, setRightPanelOpen]); // 필요한 의존성만 포함
 
   const handleCopy = async () => {
     const textToCopy = prompt?.editedPrompt || prompt?.generatedPrompt || "";
@@ -128,10 +203,41 @@ export default function PromptResult() {
       toast.error("프롬프트를 입력해주세요");
       return;
     }
+
+    const currentPrompt = prompt?.editedPrompt || prompt?.generatedPrompt || "";
+    const changes = detectChanges(currentPrompt, editedPrompt.trim());
+
+    // 기존 대화 업데이트
     updateMutation.mutate({
       promptId,
       editedPrompt: editedPrompt.trim()
     });
+
+    // 새 버전 생성
+    createVersionMutation.mutate({
+      promptId,
+      newPrompt: editedPrompt.trim(),
+      changes
+    });
+  };
+
+  // 🆕 버전 관리 핸들러
+  const handleVersionRevert = (version: PromptVersion) => {
+    if (confirm(`v${version.version}으로 복원하시겠습니까?`)) {
+      revertVersionMutation.mutate({
+        promptId,
+        versionId: version.id
+      });
+    }
+  };
+
+  const handleVersionCompare = (version: PromptVersion) => {
+    setSelectedVersionForCompare(version);
+  };
+
+  const handleBackFromComparison = () => {
+    setComparisonView(null);
+    setSelectedVersionForCompare(null);
   };
 
   const handleSaveAsset = () => {
@@ -179,6 +285,14 @@ export default function PromptResult() {
     setShowComingSoon(true);
   };
 
+  // 🆕 재분석 핸들러
+  const handleReanalyze = () => {
+    analyzeQualityMutation.mutate({
+      promptId,
+      forceReanalyze: true
+    });
+  };
+
   if (loading || isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -209,7 +323,12 @@ export default function PromptResult() {
   const intentAnswers = prompt.intentAnswers
     ? (() => {
         try {
-          return JSON.parse(prompt.intentAnswers);
+          // If it's already an object, use it as-is
+          if (typeof prompt.intentAnswers === 'object') {
+            return prompt.intentAnswers;
+          }
+          // Otherwise parse as JSON
+          return JSON.parse(prompt.intentAnswers as string);
         } catch {
           return null;
         }
@@ -296,6 +415,47 @@ export default function PromptResult() {
           </Card>
         )}
 
+        {/* 🆕 품질 점수 카드 */}
+        {analyzeQualityMutation.isPending ? (
+          <Card className="p-6 border-border/40">
+            <div className="flex items-center justify-center py-8">
+              <div className="text-center space-y-3">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mx-auto"></div>
+                <p className="text-sm text-muted-foreground">
+                  품질 분석 중... (3-5초 소요)
+                </p>
+              </div>
+            </div>
+          </Card>
+        ) : qualityData ? (
+          <QualityScoreCard
+            quality={qualityData}
+            onReanalyze={handleReanalyze}
+            isLoading={analyzeQualityMutation.isPending}
+            onImprove={() => {
+              // TODO: Step 2에서 구현 (AI 자동 개선)
+              toast.info("자동 개선 기능은 곧 추가됩니다");
+            }}
+          />
+        ) : analyzeQualityMutation.isError ? (
+          <Card className="p-6 border-red-200 dark:border-red-900 bg-red-50/30 dark:bg-red-950/20">
+            <div className="text-center space-y-3">
+              <p className="text-sm text-red-600 dark:text-red-400">
+                품질 분석에 실패했습니다
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleReanalyze}
+                className="flex items-center gap-2"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                다시 시도
+              </Button>
+            </div>
+          </Card>
+        ) : null}
+
         {/* Edit Prompt Section */}
         {isEditing ? (
           <Card className="p-5 border-border/40">
@@ -336,7 +496,7 @@ export default function PromptResult() {
             </div>
           </Card>
         ) : (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="outline"
               size="sm"
@@ -345,6 +505,15 @@ export default function PromptResult() {
             >
               <Edit className="w-3.5 h-3.5" />
               프롬프트 수정
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowVersionHistory(true)}
+              className="flex items-center gap-1.5"
+            >
+              <History className="w-3.5 h-3.5" />
+              버전 히스토리
             </Button>
             <Button
               size="sm"
@@ -502,6 +671,31 @@ export default function PromptResult() {
 
       {/* Login Modal */}
       <LoginModal open={loginModalOpen} onOpenChange={setLoginModalOpen} />
+
+      {/* Version History Sheet */}
+      <Sheet open={showVersionHistory} onOpenChange={setShowVersionHistory}>
+        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>버전 히스토리</SheetTitle>
+          </SheetHeader>
+          <div className="mt-6">
+            {comparisonView ? (
+              <VersionComparison
+                comparison={comparisonView}
+                onBack={handleBackFromComparison}
+              />
+            ) : (
+              <VersionTimeline
+                versions={versionData?.versions || []}
+                isLoading={false}
+                hasMore={versionData?.hasMore}
+                onVersionRevert={handleVersionRevert}
+                onVersionCompare={handleVersionCompare}
+              />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

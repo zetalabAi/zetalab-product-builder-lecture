@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, memo } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -6,7 +6,7 @@ import { useLayout } from "@/contexts/LayoutContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { PANEL_WIDTHS } from "@/constants/layout";
 
-export function RightPanel() {
+export const RightPanel = memo(function RightPanel() {
   const { rightPanelOpen, rightPanelContent, setRightPanelOpen } = useLayout();
   const breakpoint = useBreakpoint();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -87,4 +87,4 @@ export function RightPanel() {
       </aside>
     </>
   );
-}
+});
